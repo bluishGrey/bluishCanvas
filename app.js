@@ -265,7 +265,8 @@ function initResizeHandles() {
         return { id, el: noteEl(id), x: n.x, y: n.y, w: n.w, h: n.h };
       });
 
-      // 선택된 메모 전체를 감싸는 사각형(월드 좌표) — 핸들을 끄는 기준이 되는 틀이다.
+      // 선택된 메모 전체를 감싸는 사각형(월드 좌표) — 이 사각형을 "이미지 확대하듯"
+      // 통째로 늘리고, 그 비율을 각 메모의 위치/크기에 그대로 적용한다.
       let bx0 = Infinity;
       let by0 = Infinity;
       let bx1 = -Infinity;
@@ -277,7 +278,7 @@ function initResizeHandles() {
         by1 = Math.max(by1, n.y + n.h);
       });
       const box = { x: bx0, y: by0, w: bx1 - bx0, h: by1 - by0 };
-      const anchor = fixedCornerOf(corner, box);
+      const anchor = fixedCornerOf(corner, box); // 반대쪽 모서리 — 드래그해도 움직이지 않는 기준점
       const startCorner = {
         x: corner.includes("w") ? bx0 : bx1,
         y: corner[0] === "n" ? by0 : by1,
@@ -285,11 +286,12 @@ function initResizeHandles() {
       const startDist =
         Math.hypot(startCorner.x - anchor.x, startCorner.y - anchor.y) || 1;
 
-      // 어떤 메모든 MIN_NOTE_SIZE 밑으로 줄어들지 않도록, 허용되는 최소 배율을 미리 구해둔다.
-      const smallestOriginalDim = Math.min(
-        ...startNotes.flatMap((n) => [n.w, n.h])
-      );
-      const minScale = MIN_NOTE_SIZE / smallestOriginalDim;
+      // 어떤 메모든 MIN_NOTE_SIZE 밑으로 줄어들지 않도록, 축별로 허용되는 최소 배율을 미리 구해둔다.
+      const minOriginalW = Math.min(...startNotes.map((n) => n.w));
+      const minOriginalH = Math.min(...startNotes.map((n) => n.h));
+      const minScaleX = MIN_NOTE_SIZE / minOriginalW;
+      const minScaleY = MIN_NOTE_SIZE / minOriginalH;
+      const minUniformScale = Math.max(minScaleX, minScaleY);
 
       let moved = false;
 
@@ -302,25 +304,31 @@ function initResizeHandles() {
         }
 
         const worldPt = screenToWorld(ev.clientX, ev.clientY);
-        const dist = Math.hypot(worldPt.x - anchor.x, worldPt.y - anchor.y);
-        const scale = Math.max(dist / startDist, minScale, 0.05);
 
+        let scaleX;
+        let scaleY;
+        if (ev.shiftKey) {
+          // Shift: 원래 가로세로 비율을 유지한 채(대각선 거리 기준) 한 배율로만 조절.
+          const dist = Math.hypot(worldPt.x - anchor.x, worldPt.y - anchor.y);
+          const uniform = Math.max(dist / startDist, minUniformScale, 0.05);
+          scaleX = uniform;
+          scaleY = uniform;
+        } else {
+          // 기본: 가로/세로를 각각 독립적으로 자유롭게 조절.
+          const rawW = corner.includes("w") ? anchor.x - worldPt.x : worldPt.x - anchor.x;
+          const rawH = corner[0] === "n" ? anchor.y - worldPt.y : worldPt.y - anchor.y;
+          scaleX = Math.max(rawW / box.w, minScaleX, 0.05);
+          scaleY = Math.max(rawH / box.h, minScaleY, 0.05);
+        }
+
+        // 그룹의 anchor(고정 모서리)를 기준으로, 각 메모의 위치와 크기를 같은 비율로 함께 늘린다.
+        // (메모가 하나만 선택된 경우 box 가 곧 그 메모라서, 자기 자신의 반대쪽 모서리만 고정된 채
+        //  크기만 바뀌는 기존 단일 리사이즈와 결과가 같아진다.)
         startNotes.forEach((sn) => {
-          const fixed = fixedCornerOf(corner, sn);
-          const newW = Math.max(MIN_NOTE_SIZE, sn.w * scale);
-          const newH = Math.max(MIN_NOTE_SIZE, sn.h * scale);
-          let newX;
-          let newY;
-          if (corner.includes("w")) {
-            newX = fixed.x - newW;
-          } else {
-            newX = fixed.x;
-          }
-          if (corner[0] === "n") {
-            newY = fixed.y - newH;
-          } else {
-            newY = fixed.y;
-          }
+          const newW = Math.max(MIN_NOTE_SIZE, sn.w * scaleX);
+          const newH = Math.max(MIN_NOTE_SIZE, sn.h * scaleY);
+          const newX = anchor.x + (sn.x - anchor.x) * scaleX;
+          const newY = anchor.y + (sn.y - anchor.y) * scaleY;
 
           const n = notes.find((nn) => nn.id === sn.id);
           if (!n) return;
