@@ -21,6 +21,7 @@ const MAX_SCALE = 4;
 const view = { x: 0, y: 0, scale: 1 };
 let notes = [];
 let nextId = 1;
+let selectedId = null; // 현재 선택된 메모의 id (없으면 null)
 
 /* ===== 저장 / 불러오기 (localStorage) ===== */
 
@@ -68,6 +69,25 @@ function screenToWorld(sx, sy) {
   };
 }
 
+/* ===== 선택 ===== */
+
+function selectNote(id) {
+  if (selectedId === id) return;
+  if (selectedId !== null) {
+    const prevEl = world.querySelector(`.note[data-id="${selectedId}"]`);
+    if (prevEl) prevEl.classList.remove("selected");
+  }
+  selectedId = id;
+  if (id !== null) {
+    const el = world.querySelector(`.note[data-id="${id}"]`);
+    if (el) el.classList.add("selected");
+  }
+}
+
+function deselectAll() {
+  selectNote(null);
+}
+
 /* ===== 메모 ===== */
 
 function createNote(worldX, worldY, text = "") {
@@ -76,6 +96,16 @@ function createNote(worldX, worldY, text = "") {
   const el = renderNote(note);
   save();
   return el;
+}
+
+function deleteNote(id) {
+  const idx = notes.findIndex((n) => n.id === id);
+  if (idx === -1) return;
+  notes.splice(idx, 1);
+  const el = world.querySelector(`.note[data-id="${id}"]`);
+  if (el) el.remove();
+  if (selectedId === id) selectedId = null;
+  save();
 }
 
 function renderNote(note) {
@@ -97,20 +127,34 @@ function renderNote(note) {
     save();
   });
 
+  const deleteBtn = document.createElement("button");
+  deleteBtn.type = "button";
+  deleteBtn.className = "note-delete-btn";
+  deleteBtn.setAttribute("aria-label", "메모 삭제");
+  deleteBtn.textContent = "×";
+  // 삭제 버튼 위에서의 mousedown 이 메모 선택/드래그로 이어지지 않도록 막는다.
+  deleteBtn.addEventListener("mousedown", (e) => e.stopPropagation());
+  deleteBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    deleteNote(note.id);
+  });
+
   el.appendChild(textEl);
+  el.appendChild(deleteBtn);
   world.appendChild(el);
   makeNoteInteractive(el, note, textEl);
   return el;
 }
 
 function makeNoteInteractive(el, note, textEl) {
-  // --- 드래그로 이동 ---
+  // --- 클릭으로 선택 + 드래그로 이동 ---
   el.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
     // 이 메모를 편집 중이면 드래그 대신 글자 선택을 허용한다.
     if (document.activeElement === textEl) return;
 
-    e.stopPropagation(); // 캔버스 팬이 시작되지 않도록 막는다.
+    e.stopPropagation(); // 캔버스 쪽 클릭(선택 해제) 로직으로 번지지 않게 막는다.
+    selectNote(note.id);
 
     const startX = e.clientX;
     const startY = e.clientY;
@@ -158,11 +202,14 @@ function makeNoteInteractive(el, note, textEl) {
   });
 }
 
-/* ===== 캔버스: 팬 / 줌 / 생성 ===== */
+/* ===== 캔버스: 팬 / 줌 / 생성 / 선택 해제 ===== */
 
-// 빈 곳 드래그 → 화면 이동
+// 오른쪽 버튼 드래그 → 화면 이동. 왼쪽 버튼 드래그는 지금은 아무 동작 없음
+// (추후 다중 선택 영역 지정용으로 비워둔다).
+canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+
 canvas.addEventListener("mousedown", (e) => {
-  if (e.button !== 0) return;
+  if (e.button !== 2) return;
 
   const startX = e.clientX;
   const startY = e.clientY;
@@ -186,6 +233,11 @@ canvas.addEventListener("mousedown", (e) => {
 
   document.addEventListener("mousemove", onMove);
   document.addEventListener("mouseup", onUp);
+});
+
+// 빈 곳 클릭 → 선택 해제
+canvas.addEventListener("click", (e) => {
+  if (e.target === canvas) deselectAll();
 });
 
 // 빈 곳 더블클릭 → 새 메모 (커서 위치에 대략 중앙 정렬)
@@ -229,6 +281,27 @@ resetBtn.addEventListener("click", () => {
   view.scale = 1;
   applyTransform();
   save();
+});
+
+/* ===== 키보드: 선택된 메모 삭제 ===== */
+
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Delete" && e.key !== "Backspace") return;
+  if (selectedId === null) return;
+
+  // 텍스트를 입력하는 중이면(메모 편집, 다른 입력 필드 등) 글자 삭제로 취급한다.
+  const active = document.activeElement;
+  if (
+    active &&
+    (active.isContentEditable ||
+      active.tagName === "INPUT" ||
+      active.tagName === "TEXTAREA")
+  ) {
+    return;
+  }
+
+  e.preventDefault(); // Backspace 의 브라우저 "뒤로 가기" 동작 방지
+  deleteNote(selectedId);
 });
 
 /* ===== 시작 ===== */

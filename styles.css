@@ -30,7 +30,7 @@ body {
   /* 점 격자. 크기/위치는 app.js 에서 팬·줌에 맞춰 갱신한다. */
   background-image: radial-gradient(circle, var(--grid-dot) 1.4px, transparent 1.4px);
   background-size: 24px 24px;
-  cursor: grab;
+  cursor: default;
   user-select: none;
   overflow: hidden;
 }
@@ -65,6 +65,44 @@ body {
 .note.dragging {
   cursor: grabbing;
   box-shadow: 0 10px 26px rgba(31, 39, 51, 0.22);
+}
+
+.note.selected {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px rgba(59, 111, 212, 0.35), 0 4px 14px rgba(31, 39, 51, 0.12);
+}
+
+/* 메모에 마우스를 올렸을 때만 보이는 삭제 버튼 */
+.note-delete-btn {
+  position: absolute;
+  top: -8px;
+  right: -8px;
+  width: 20px;
+  height: 20px;
+  border: 1px solid var(--note-border);
+  border-radius: 50%;
+  background: #fff;
+  color: #55617a;
+  font-size: 13px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.note:hover .note-delete-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.note-delete-btn:hover {
+  color: #fff;
+  background: #d64545;
+  border-color: #d64545;
 }
 
 .note-text {
