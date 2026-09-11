@@ -18,11 +18,18 @@ const resetBtn = document.getElementById("reset-view");
 const STORAGE_KEY = "bluishCanvas.v1";
 const MIN_SCALE = 0.2;
 const MAX_SCALE = 4;
+const MAX_HISTORY = 50;
 
 const view = { x: 0, y: 0, scale: 1 };
 let notes = [];
 let nextId = 1;
 let selectedIds = new Set(); // 현재 선택된 메모 id 들
+
+// 실행취소/다시실행: notes 의 스냅샷 목록. history[historyIndex] 가 현재 상태.
+// 팬/줌은 기록 대상이 아니다 (생성/이동/삭제/텍스트 수정만 기록).
+let history = [];
+let historyIndex = -1;
+let isRestoringHistory = false;
 
 /* ===== 저장 / 불러오기 (localStorage) ===== */
 
@@ -48,6 +55,51 @@ function load() {
   } catch (e) {
     console.warn("불러오기 실패:", e);
   }
+}
+
+/* ===== 실행취소 / 다시실행 ===== */
+
+function cloneNotes() {
+  return notes.map((n) => ({ ...n }));
+}
+
+// 지금까지의 변경을 히스토리 한 칸으로 확정한다. (생성/이동/삭제/텍스트 수정 완료 시점에 호출)
+function pushHistory() {
+  if (isRestoringHistory) return;
+  history = history.slice(0, historyIndex + 1); // 이후의 "다시실행" 가능했던 기록은 버린다
+  history.push({ notes: cloneNotes(), nextId });
+  while (history.length > MAX_HISTORY) {
+    history.shift();
+  }
+  historyIndex = history.length - 1;
+}
+
+function commitChange() {
+  pushHistory();
+  save();
+}
+
+function restoreSnapshot(snapshot) {
+  isRestoringHistory = true;
+  world.querySelectorAll(".note").forEach((el) => el.remove());
+  notes = snapshot.notes.map((n) => ({ ...n }));
+  nextId = snapshot.nextId;
+  selectedIds = new Set(); // 대상이 바뀌므로 선택은 비운다
+  notes.forEach(renderNote);
+  save();
+  isRestoringHistory = false;
+}
+
+function undo() {
+  if (historyIndex <= 0) return;
+  historyIndex--;
+  restoreSnapshot(history[historyIndex]);
+}
+
+function redo() {
+  if (historyIndex >= history.length - 1) return;
+  historyIndex++;
+  restoreSnapshot(history[historyIndex]);
 }
 
 /* ===== 좌표 변환 & 화면 갱신 ===== */
@@ -125,7 +177,7 @@ function createNote(worldX, worldY, text = "") {
   const note = { id: nextId++, x: worldX, y: worldY, text };
   notes.push(note);
   const el = renderNote(note);
-  save();
+  commitChange();
   return el;
 }
 
@@ -140,13 +192,13 @@ function removeNoteFromState(id) {
 
 function deleteNote(id) {
   removeNoteFromState(id);
-  save();
+  commitChange();
 }
 
 function deleteSelectedNotes() {
   if (selectedIds.size === 0) return;
   Array.from(selectedIds).forEach(removeNoteFromState);
-  save();
+  commitChange();
 }
 
 function renderNote(note) {
@@ -163,9 +215,19 @@ function renderNote(note) {
   textEl.dataset.placeholder = "내용 입력...";
   textEl.textContent = note.text;
 
+  let textBeforeEdit = note.text;
+  textEl.addEventListener("focus", () => {
+    textBeforeEdit = note.text;
+  });
   textEl.addEventListener("input", () => {
     note.text = textEl.textContent;
     save();
+  });
+  textEl.addEventListener("blur", () => {
+    // 편집 중 글자 하나하나가 아니라, 편집을 마친 시점에 한 칸으로 기록한다.
+    if (note.text !== textBeforeEdit) {
+      commitChange();
+    }
   });
 
   const deleteBtn = document.createElement("button");
@@ -239,7 +301,7 @@ function makeNoteInteractive(el, note, textEl) {
       document.removeEventListener("mouseup", onUp);
       startPositions.forEach((p) => p.el && p.el.classList.remove("dragging"));
       if (moved) {
-        save();
+        commitChange();
       } else if (partOfMultiSelection) {
         // 그룹 안의 메모 하나를 그냥 클릭만 한 경우 → 그 메모 하나만 선택으로 좁힌다.
         selectOnly(note.id);
@@ -409,8 +471,41 @@ document.addEventListener("keydown", (e) => {
   deleteSelectedNotes();
 });
 
+/* ===== 키보드: 실행취소 / 다시실행 ===== */
+
+document.addEventListener("keydown", (e) => {
+  const ctrlOrCmd = e.ctrlKey || e.metaKey;
+  if (!ctrlOrCmd) return;
+
+  const key = e.key.toLowerCase();
+  if (key !== "z" && key !== "y") return;
+
+  // 텍스트 편집 중에는 건드리지 않는다 — contentEditable 의 문자 단위
+  // 기본 되돌리기(브라우저 내장)를 그대로 쓰게 둔다.
+  const active = document.activeElement;
+  if (
+    active &&
+    (active.isContentEditable ||
+      active.tagName === "INPUT" ||
+      active.tagName === "TEXTAREA")
+  ) {
+    return;
+  }
+
+  e.preventDefault();
+  if (key === "y" || (key === "z" && e.shiftKey)) {
+    redo();
+  } else {
+    undo();
+  }
+});
+
 /* ===== 시작 ===== */
 
 load();
 notes.forEach(renderNote);
 applyTransform();
+
+// 히스토리 시작점: 지금 이 상태로 되돌아올 수 있게 첫 칸을 기록해둔다.
+history = [{ notes: cloneNotes(), nextId }];
+historyIndex = 0;
