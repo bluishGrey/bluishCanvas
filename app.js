@@ -594,10 +594,11 @@ canvas.addEventListener("mousedown", (e) => {
   const startY = e.clientY;
   let moved = false;
 
-  // Shift를 누른 채 시작했다면, 드래그 전에 이미 선택돼 있던 것들은 그대로 두고
-  // 영역에 걸리는 것들을 거기에 "더한다". Shift 없이 시작했다면 기존처럼 매번 새로 고른다.
+  // Shift를 누른 채 시작했다면, 드래그 전 선택 상태를 기준으로 영역에 걸리는 것들만
+  // 토글한다: 원래 선택돼 있었으면 해제, 아니었으면 추가. 영역 밖의 기존 선택은 그대로 둔다.
+  // (Shift+클릭과 같은 원칙 — "합치기"가 아니라 "뒤집기")
   const isAdditive = e.shiftKey;
-  const baseSelection = Array.from(selectedIds);
+  const baseSelectionSet = new Set(selectedIds);
 
   const onMove = (ev) => {
     if (!moved && Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) > 3) {
@@ -615,7 +616,15 @@ canvas.addEventListener("mousedown", (e) => {
 
     const rectIds = notesInScreenRect(startX, startY, ev.clientX, ev.clientY);
     if (isAdditive) {
-      setSelection(Array.from(new Set([...baseSelection, ...rectIds])));
+      const rectSet = new Set(rectIds);
+      const result = [];
+      baseSelectionSet.forEach((id) => {
+        if (!rectSet.has(id)) result.push(id); // 영역 밖의 기존 선택은 그대로 유지
+      });
+      rectIds.forEach((id) => {
+        if (!baseSelectionSet.has(id)) result.push(id); // 원래 미선택 + 영역 안 → 추가
+      });
+      setSelection(result);
     } else {
       setSelection(rectIds);
     }
