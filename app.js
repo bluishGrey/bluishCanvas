@@ -11,6 +11,7 @@
 
 const canvas = document.getElementById("canvas");
 const world = document.getElementById("world");
+const selectionBoxEl = document.getElementById("selection-box");
 const zoomLabel = document.getElementById("zoom-label");
 const resetBtn = document.getElementById("reset-view");
 
@@ -21,7 +22,7 @@ const MAX_SCALE = 4;
 const view = { x: 0, y: 0, scale: 1 };
 let notes = [];
 let nextId = 1;
-let selectedId = null; // 현재 선택된 메모의 id (없으면 null)
+let selectedIds = new Set(); // 현재 선택된 메모 id 들
 
 /* ===== 저장 / 불러오기 (localStorage) ===== */
 
@@ -69,23 +70,53 @@ function screenToWorld(sx, sy) {
   };
 }
 
-/* ===== 선택 ===== */
+/* ===== 선택 (단일 / 다중) ===== */
 
-function selectNote(id) {
-  if (selectedId === id) return;
-  if (selectedId !== null) {
-    const prevEl = world.querySelector(`.note[data-id="${selectedId}"]`);
-    if (prevEl) prevEl.classList.remove("selected");
-  }
-  selectedId = id;
-  if (id !== null) {
-    const el = world.querySelector(`.note[data-id="${id}"]`);
-    if (el) el.classList.add("selected");
-  }
+function noteEl(id) {
+  return world.querySelector(`.note[data-id="${id}"]`);
+}
+
+// 현재 선택 집합을 정확히 idList 로 바꾸고, 시각 표시(.selected)를 갱신한다.
+function setSelection(idList) {
+  const next = new Set(idList);
+  selectedIds.forEach((id) => {
+    if (!next.has(id)) {
+      const el = noteEl(id);
+      if (el) el.classList.remove("selected");
+    }
+  });
+  next.forEach((id) => {
+    if (!selectedIds.has(id)) {
+      const el = noteEl(id);
+      if (el) el.classList.add("selected");
+    }
+  });
+  selectedIds = next;
+}
+
+function selectOnly(id) {
+  setSelection(id === null ? [] : [id]);
 }
 
 function deselectAll() {
-  selectNote(null);
+  setSelection([]);
+}
+
+// 화면 좌표 기준 사각형(rx1,ry1)-(rx2,ry2) 과 겹치는 메모들의 id 목록.
+function notesInScreenRect(rx1, ry1, rx2, ry2) {
+  const left = Math.min(rx1, rx2);
+  const right = Math.max(rx1, rx2);
+  const top = Math.min(ry1, ry2);
+  const bottom = Math.max(ry1, ry2);
+  const ids = [];
+  notes.forEach((note) => {
+    const el = noteEl(note.id);
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const overlaps = r.left < right && r.right > left && r.top < bottom && r.bottom > top;
+    if (overlaps) ids.push(note.id);
+  });
+  return ids;
 }
 
 /* ===== 메모 ===== */
@@ -98,13 +129,23 @@ function createNote(worldX, worldY, text = "") {
   return el;
 }
 
-function deleteNote(id) {
+function removeNoteFromState(id) {
   const idx = notes.findIndex((n) => n.id === id);
   if (idx === -1) return;
   notes.splice(idx, 1);
-  const el = world.querySelector(`.note[data-id="${id}"]`);
+  const el = noteEl(id);
   if (el) el.remove();
-  if (selectedId === id) selectedId = null;
+  selectedIds.delete(id);
+}
+
+function deleteNote(id) {
+  removeNoteFromState(id);
+  save();
+}
+
+function deleteSelectedNotes() {
+  if (selectedIds.size === 0) return;
+  Array.from(selectedIds).forEach(removeNoteFromState);
   save();
 }
 
@@ -147,22 +188,32 @@ function renderNote(note) {
 }
 
 function makeNoteInteractive(el, note, textEl) {
-  // --- 클릭으로 선택 + 드래그로 이동 ---
+  // --- 클릭으로 선택 + 드래그로 이동 (여러 개가 선택되어 있으면 다같이 이동) ---
   el.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
     // 이 메모를 편집 중이면 드래그 대신 글자 선택을 허용한다.
     if (document.activeElement === textEl) return;
 
-    e.stopPropagation(); // 캔버스 쪽 클릭(선택 해제) 로직으로 번지지 않게 막는다.
-    selectNote(note.id);
+    e.stopPropagation(); // 캔버스 쪽 클릭(선택 해제)·드래그 선택 로직으로 번지지 않게 막는다.
+
+    // 이미 여러 개가 선택된 상태에서 그 중 하나를 누른 거라면, 선택을 유지한 채
+    // 그룹으로 드래그할 수 있게 한다. (그냥 클릭만 하고 끝나면 mouseup 에서 단일 선택으로 좁힌다)
+    const partOfMultiSelection = selectedIds.size > 1 && selectedIds.has(note.id);
+    if (!partOfMultiSelection) {
+      selectOnly(note.id);
+    }
+
+    const draggedIds = Array.from(selectedIds);
+    const startPositions = draggedIds.map((id) => {
+      const n = notes.find((nn) => nn.id === id);
+      return { id, el: noteEl(id), x: n.x, y: n.y };
+    });
 
     const startX = e.clientX;
     const startY = e.clientY;
-    const origX = note.x;
-    const origY = note.y;
     let moved = false;
 
-    el.classList.add("dragging");
+    startPositions.forEach((p) => p.el && p.el.classList.add("dragging"));
 
     const onMove = (ev) => {
       // 화면에서 움직인 픽셀을 scale 로 나눠 월드 좌표 변화량으로 바꾼다.
@@ -171,17 +222,28 @@ function makeNoteInteractive(el, note, textEl) {
       if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) > 3) {
         moved = true;
       }
-      note.x = origX + dx;
-      note.y = origY + dy;
-      el.style.left = `${note.x}px`;
-      el.style.top = `${note.y}px`;
+      startPositions.forEach((p) => {
+        const n = notes.find((nn) => nn.id === p.id);
+        if (!n) return;
+        n.x = p.x + dx;
+        n.y = p.y + dy;
+        if (p.el) {
+          p.el.style.left = `${n.x}px`;
+          p.el.style.top = `${n.y}px`;
+        }
+      });
     };
 
     const onUp = () => {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
-      el.classList.remove("dragging");
-      if (moved) save();
+      startPositions.forEach((p) => p.el && p.el.classList.remove("dragging"));
+      if (moved) {
+        save();
+      } else if (partOfMultiSelection) {
+        // 그룹 안의 메모 하나를 그냥 클릭만 한 경우 → 그 메모 하나만 선택으로 좁힌다.
+        selectOnly(note.id);
+      }
     };
 
     document.addEventListener("mousemove", onMove);
@@ -202,10 +264,9 @@ function makeNoteInteractive(el, note, textEl) {
   });
 }
 
-/* ===== 캔버스: 팬 / 줌 / 생성 / 선택 해제 ===== */
+/* ===== 캔버스: 팬 / 줌 / 생성 / 선택 ===== */
 
-// 오른쪽 버튼 드래그 → 화면 이동. 왼쪽 버튼 드래그는 지금은 아무 동작 없음
-// (추후 다중 선택 영역 지정용으로 비워둔다).
+// 오른쪽 버튼 드래그 → 화면 이동.
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
 canvas.addEventListener("mousedown", (e) => {
@@ -235,8 +296,52 @@ canvas.addEventListener("mousedown", (e) => {
   document.addEventListener("mouseup", onUp);
 });
 
-// 빈 곳 클릭 → 선택 해제
+// 왼쪽 버튼으로 빈 곳을 드래그 → 사각형 영역에 걸친 메모를 모두 선택.
+// (움직이지 않고 떼면 그냥 클릭이므로, 아래 click 핸들러가 선택 해제를 처리한다)
+let justBoxSelected = false;
+
+canvas.addEventListener("mousedown", (e) => {
+  if (e.button !== 0) return;
+  if (e.target !== canvas) return; // 메모 위에서 시작된 드래그는 각 메모의 핸들러가 처리
+
+  const startX = e.clientX;
+  const startY = e.clientY;
+  let moved = false;
+
+  const onMove = (ev) => {
+    if (!moved && Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) > 3) {
+      moved = true;
+      selectionBoxEl.hidden = false;
+    }
+    if (!moved) return;
+
+    const left = Math.min(startX, ev.clientX);
+    const top = Math.min(startY, ev.clientY);
+    selectionBoxEl.style.left = `${left}px`;
+    selectionBoxEl.style.top = `${top}px`;
+    selectionBoxEl.style.width = `${Math.abs(ev.clientX - startX)}px`;
+    selectionBoxEl.style.height = `${Math.abs(ev.clientY - startY)}px`;
+
+    setSelection(notesInScreenRect(startX, startY, ev.clientX, ev.clientY));
+  };
+
+  const onUp = () => {
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+    selectionBoxEl.hidden = true;
+    if (moved) justBoxSelected = true; // 뒤이어 발생할 click 에서 선택 해제되지 않도록
+  };
+
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+});
+
+// 빈 곳 클릭 → 선택 해제 (방금 영역 선택을 했다면 건너뛴다)
 canvas.addEventListener("click", (e) => {
+  if (justBoxSelected) {
+    justBoxSelected = false;
+    return;
+  }
   if (e.target === canvas) deselectAll();
 });
 
@@ -287,7 +392,7 @@ resetBtn.addEventListener("click", () => {
 
 document.addEventListener("keydown", (e) => {
   if (e.key !== "Delete" && e.key !== "Backspace") return;
-  if (selectedId === null) return;
+  if (selectedIds.size === 0) return;
 
   // 텍스트를 입력하는 중이면(메모 편집, 다른 입력 필드 등) 글자 삭제로 취급한다.
   const active = document.activeElement;
@@ -301,7 +406,7 @@ document.addEventListener("keydown", (e) => {
   }
 
   e.preventDefault(); // Backspace 의 브라우저 "뒤로 가기" 동작 방지
-  deleteNote(selectedId);
+  deleteSelectedNotes();
 });
 
 /* ===== 시작 ===== */

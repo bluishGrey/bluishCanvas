@@ -39,6 +39,14 @@ body {
   cursor: grabbing;
 }
 
+/* ===== 다중 선택 영역 박스 (화면 좌표, transform 영향 안 받음) ===== */
+#selection-box {
+  position: absolute;
+  border: 1px solid var(--accent);
+  background: rgba(59, 111, 212, 0.12);
+  pointer-events: none;
+}
+
 /* ===== 무한 평면 ===== */
 #world {
   position: absolute;
