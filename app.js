@@ -167,6 +167,17 @@ function deselectAll() {
   setSelection([]);
 }
 
+// 이미 선택되어 있으면 선택에서 빼고, 아니면 기존 선택은 그대로 둔 채 더한다. (Shift+클릭)
+function toggleSelection(id) {
+  const next = new Set(selectedIds);
+  if (next.has(id)) {
+    next.delete(id);
+  } else {
+    next.add(id);
+  }
+  setSelection(Array.from(next));
+}
+
 // 화면 좌표 기준 사각형(rx1,ry1)-(rx2,ry2) 과 겹치는 메모들의 id 목록.
 function notesInScreenRect(rx1, ry1, rx2, ry2) {
   const left = Math.min(rx1, rx2);
@@ -460,6 +471,12 @@ function makeNoteInteractive(el, note, textEl) {
     e.preventDefault();
     e.stopPropagation(); // 캔버스 쪽 클릭(선택 해제)·드래그 선택 로직으로 번지지 않게 막는다.
 
+    // Shift+클릭: 이 메모만 선택/해제를 토글한다 (기존 선택은 그대로 두고). 이동은 시작하지 않는다.
+    if (e.shiftKey) {
+      toggleSelection(note.id);
+      return;
+    }
+
     // 이미 여러 개가 선택된 상태에서 그 중 하나를 누른 거라면, 선택을 유지한 채
     // 그룹으로 드래그할 수 있게 한다. (그냥 클릭만 하고 끝나면 mouseup 에서 단일 선택으로 좁힌다)
     const partOfMultiSelection = selectedIds.size > 1 && selectedIds.has(note.id);
@@ -577,6 +594,11 @@ canvas.addEventListener("mousedown", (e) => {
   const startY = e.clientY;
   let moved = false;
 
+  // Shift를 누른 채 시작했다면, 드래그 전에 이미 선택돼 있던 것들은 그대로 두고
+  // 영역에 걸리는 것들을 거기에 "더한다". Shift 없이 시작했다면 기존처럼 매번 새로 고른다.
+  const isAdditive = e.shiftKey;
+  const baseSelection = Array.from(selectedIds);
+
   const onMove = (ev) => {
     if (!moved && Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) > 3) {
       moved = true;
@@ -591,7 +613,12 @@ canvas.addEventListener("mousedown", (e) => {
     selectionBoxEl.style.width = `${Math.abs(ev.clientX - startX)}px`;
     selectionBoxEl.style.height = `${Math.abs(ev.clientY - startY)}px`;
 
-    setSelection(notesInScreenRect(startX, startY, ev.clientX, ev.clientY));
+    const rectIds = notesInScreenRect(startX, startY, ev.clientX, ev.clientY);
+    if (isAdditive) {
+      setSelection(Array.from(new Set([...baseSelection, ...rectIds])));
+    } else {
+      setSelection(rectIds);
+    }
   };
 
   const onUp = () => {
@@ -605,12 +632,13 @@ canvas.addEventListener("mousedown", (e) => {
   document.addEventListener("mouseup", onUp);
 });
 
-// 빈 곳 클릭 → 선택 해제 (방금 영역 선택을 했다면 건너뛴다)
+// 빈 곳 클릭 → 선택 해제 (방금 영역 선택을 했다면 건너뛴다. Shift를 누른 채라면 선택을 지우지 않는다)
 canvas.addEventListener("click", (e) => {
   if (justBoxSelected) {
     justBoxSelected = false;
     return;
   }
+  if (e.shiftKey) return;
   if (e.target === canvas) deselectAll();
 });
 
