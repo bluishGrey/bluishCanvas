@@ -13,6 +13,8 @@ const canvas = document.getElementById("canvas");
 const world = document.getElementById("world");
 const selectionBoxEl = document.getElementById("selection-box");
 const resizeHandlesEl = document.getElementById("resize-handles");
+const quickMenuEl = document.getElementById("quick-menu");
+const nextShapeLabelEl = document.getElementById("next-shape-label");
 const zoomLabel = document.getElementById("zoom-label");
 const resetBtn = document.getElementById("reset-view");
 
@@ -23,11 +25,14 @@ const MAX_HISTORY = 50;
 const DEFAULT_NOTE_W = 170;
 const DEFAULT_NOTE_H = 70;
 const MIN_NOTE_SIZE = 60; // 메모가 이보다 작게 줄어들지는 않는다
+const DEFAULT_SHAPE = "rect";
+const SHAPE_LABELS = { rect: "사각형", ellipse: "원", diamond: "마름모" };
 
 const view = { x: 0, y: 0, scale: 1 };
 let notes = [];
 let nextId = 1;
 let selectedIds = new Set(); // 현재 선택된 메모 id 들
+let nextShape = DEFAULT_SHAPE; // 다음에 빈 곳을 더블클릭(또는 퀵메뉴로 생성)할 때 쓸 도형
 
 // 실행취소/다시실행: notes 의 스냅샷 목록. history[historyIndex] 가 현재 상태.
 // 팬/줌은 기록 대상이 아니다 (생성/이동/삭제/텍스트 수정만 기록).
@@ -55,10 +60,11 @@ function load() {
     const data = JSON.parse(raw);
     if (data.view) Object.assign(view, data.view);
     notes = Array.isArray(data.notes) ? data.notes : [];
-    // 크기 조절 기능이 생기기 전에 저장된 메모는 w/h 가 없으므로 기본값을 채워준다.
+    // 크기 조절/도형 기능이 생기기 전에 저장된 메모는 w/h/shape 가 없으므로 기본값을 채워준다.
     notes.forEach((n) => {
       if (typeof n.w !== "number") n.w = DEFAULT_NOTE_W;
       if (typeof n.h !== "number") n.h = DEFAULT_NOTE_H;
+      if (!n.shape) n.shape = DEFAULT_SHAPE;
     });
     nextId = data.nextId || notes.length + 1;
   } catch (e) {
@@ -372,7 +378,7 @@ function initResizeHandles() {
 
 /* ===== 메모 ===== */
 
-function createNote(worldX, worldY, text = "") {
+function createNote(worldX, worldY, text = "", shape = nextShape) {
   const note = {
     id: nextId++,
     x: worldX,
@@ -380,6 +386,7 @@ function createNote(worldX, worldY, text = "") {
     w: DEFAULT_NOTE_W,
     h: DEFAULT_NOTE_H,
     text,
+    shape,
   };
   notes.push(note);
   const el = renderNote(note);
@@ -411,10 +418,17 @@ function renderNote(note) {
   const el = document.createElement("div");
   el.className = "note";
   el.dataset.id = String(note.id);
+  el.dataset.shape = note.shape || DEFAULT_SHAPE;
   el.style.left = `${note.x}px`;
   el.style.top = `${note.y}px`;
   el.style.width = `${note.w}px`;
   el.style.height = `${note.h}px`;
+
+  // 배경/테두리/그림자 전용 레이어. 텍스트/삭제버튼은 여기 안 들어있어서
+  // 마름모의 clip-path 에 같이 잘려나가지 않는다.
+  const shapeEl = document.createElement("div");
+  shapeEl.className = "note-shape";
+  el.appendChild(shapeEl);
 
   const textEl = document.createElement("div");
   textEl.className = "note-text";
@@ -546,11 +560,73 @@ function makeNoteInteractive(el, note, textEl) {
   });
 }
 
+/* ===== 도형 선택(다음 생성 도형) & 빈 곳 우클릭 퀵메뉴 ===== */
+
+function setNextShape(shape) {
+  if (!SHAPE_LABELS[shape]) return;
+  nextShape = shape;
+  nextShapeLabelEl.textContent = SHAPE_LABELS[shape];
+  updateQuickMenuShapeHighlight();
+}
+
+function updateQuickMenuShapeHighlight() {
+  quickMenuEl.querySelectorAll(".shape-item").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.shape === nextShape);
+  });
+}
+
+let quickMenuWorldPos = null; // 퀵메뉴를 열었을 때의 월드 좌표 (거기에 메모를 추가하려고 기억해둠)
+
+function openQuickMenu(clientX, clientY, worldPos) {
+  quickMenuWorldPos = worldPos;
+  updateQuickMenuShapeHighlight();
+  quickMenuEl.hidden = false;
+
+  // 화면 밖으로 나가지 않도록, 실제 크기를 잰 뒤 위치를 보정한다.
+  const menuRect = quickMenuEl.getBoundingClientRect();
+  const left = Math.min(clientX, window.innerWidth - menuRect.width - 8);
+  const top = Math.min(clientY, window.innerHeight - menuRect.height - 8);
+  quickMenuEl.style.left = `${Math.max(8, left)}px`;
+  quickMenuEl.style.top = `${Math.max(8, top)}px`;
+}
+
+function closeQuickMenu() {
+  quickMenuEl.hidden = true;
+  quickMenuWorldPos = null;
+}
+
+quickMenuEl.addEventListener("click", (e) => {
+  const btn = e.target.closest(".quick-menu-item");
+  if (!btn) return;
+
+  if (btn.dataset.action === "create" && quickMenuWorldPos) {
+    const p = quickMenuWorldPos;
+    const el = createNote(p.x - DEFAULT_NOTE_W / 2, p.y - DEFAULT_NOTE_H / 2, "", nextShape);
+    el.querySelector(".note-text").focus();
+  } else if (btn.dataset.shape) {
+    setNextShape(btn.dataset.shape);
+  }
+
+  closeQuickMenu();
+});
+
+// 메뉴 바깥에서 새로 뭔가를 누르면(클릭/드래그 시작) 메뉴를 닫는다.
+document.addEventListener("mousedown", (e) => {
+  if (!quickMenuEl.hidden && !quickMenuEl.contains(e.target)) {
+    closeQuickMenu();
+  }
+});
+
 /* ===== 캔버스: 팬 / 줌 / 생성 / 선택 ===== */
 
-// 오른쪽 버튼은 지금은 예약만 해둔다 (다음 단계: 메모 사이 화살표 연결).
-// 브라우저 기본 컨텍스트 메뉴만 막아, 나중에 방해되지 않게 한다.
-canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+// 빈 곳 우클릭 → 퀵메뉴(메모 추가 / 도형 전환). 메모 위 우클릭은 지금은 예약만
+// 해둔다 (다음 단계: 메모 사이 화살표 연결). 브라우저 기본 메뉴는 항상 막는다.
+canvas.addEventListener("contextmenu", (e) => {
+  e.preventDefault();
+  if (e.target !== canvas) return;
+  const worldPos = screenToWorld(e.clientX, e.clientY);
+  openQuickMenu(e.clientX, e.clientY, worldPos);
+});
 
 // 화면 이동(팬): 휠(가운데) 버튼 드래그, 또는 Ctrl + 왼쪽 버튼 드래그.
 canvas.addEventListener("mousedown", (e) => {
@@ -744,9 +820,35 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
+/* ===== 키보드: 도형 단축키(1/2/3) & 퀵메뉴 닫기(Esc) ===== */
+
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape") {
+    if (!quickMenuEl.hidden) closeQuickMenu();
+    return;
+  }
+
+  if (e.key !== "1" && e.key !== "2" && e.key !== "3") return;
+
+  // 텍스트 편집/입력 중이면 숫자는 평범한 글자 입력으로 취급한다.
+  const active = document.activeElement;
+  if (
+    active &&
+    (active.isContentEditable ||
+      active.tagName === "INPUT" ||
+      active.tagName === "TEXTAREA")
+  ) {
+    return;
+  }
+
+  const shapeByKey = { 1: "rect", 2: "ellipse", 3: "diamond" };
+  setNextShape(shapeByKey[e.key]);
+});
+
 /* ===== 시작 ===== */
 
 initResizeHandles();
+setNextShape(nextShape); // 라벨/퀵메뉴 표시를 초기 상태와 맞춘다
 load();
 notes.forEach(renderNote);
 applyTransform();

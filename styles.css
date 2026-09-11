@@ -89,31 +89,53 @@ body {
 /* 가로/세로 크기(width, height)는 app.js 가 인라인 스타일로 지정한다 (크기조절 대상). */
 .note {
   position: absolute;
-  background: var(--note-bg);
-  border: 1px solid var(--note-border);
-  border-radius: 10px;
-  box-shadow: 0 4px 14px rgba(31, 39, 51, 0.12);
   padding: 10px 12px;
   cursor: grab;
 }
 
 .note.dragging {
   cursor: grabbing;
+}
+
+/* 배경/테두리/그림자는 별도 레이어(.note-shape)가 맡는다. 마름모는 clip-path 로 모양을
+   잘라내는데, 이걸 .note 자체에 걸면 안쪽 텍스트/삭제버튼까지 같이 잘려나가기 때문이다. */
+.note-shape {
+  position: absolute;
+  inset: 0;
+  background: var(--note-bg);
+  border: 1px solid var(--note-border);
+  border-radius: 10px; /* 기본값: 사각형 */
+  box-shadow: 0 4px 14px rgba(31, 39, 51, 0.12);
+  pointer-events: none;
+}
+
+.note[data-shape="ellipse"] .note-shape {
+  border-radius: 50%;
+}
+
+.note[data-shape="diamond"] .note-shape {
+  border-radius: 0;
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+}
+
+.note.dragging .note-shape {
   box-shadow: 0 10px 26px rgba(31, 39, 51, 0.22);
 }
 
-.note.selected {
+.note.selected .note-shape {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(59, 111, 212, 0.35), 0 4px 14px rgba(31, 39, 51, 0.12);
 }
 
-/* 메모에 마우스를 올렸을 때만 보이는 삭제 버튼 */
+/* 메모에 마우스를 올렸을 때만 보이는 삭제 버튼.
+   모서리 밖으로 걸치지 않고 안쪽에 두는 이유: 밖으로 걸치면 같은 자리의 크기조절
+   핸들(#resize-handles, .note 보다 나중에 그려지는 별도 레이어)에 클릭이 가로막힌다. */
 .note-delete-btn {
   position: absolute;
-  top: -8px;
-  right: -8px;
-  width: 20px;
-  height: 20px;
+  top: 4px;
+  right: 4px;
+  width: 18px;
+  height: 18px;
   border: 1px solid var(--note-border);
   border-radius: 50%;
   background: #fff;
@@ -141,6 +163,7 @@ body {
 }
 
 .note-text {
+  position: relative; /* .note-shape 보다 나중에 그려지도록(위로 오도록) 포지셔닝 컨텍스트를 갖는다 */
   height: 100%;
   overflow-y: auto;
   overflow-x: hidden;
@@ -176,6 +199,12 @@ body {
   border-radius: 8px;
   font-size: 13px;
   backdrop-filter: blur(4px);
+}
+
+#next-shape-label {
+  padding: 2px 8px;
+  border-right: 1px solid var(--note-border);
+  color: #55617a;
 }
 
 #zoom-label {
@@ -215,4 +244,52 @@ body {
 
 #hint b {
   color: var(--text);
+}
+
+/* ===== 빈 곳 우클릭 퀵메뉴 ===== */
+#quick-menu {
+  position: fixed;
+  min-width: 170px;
+  background: #fff;
+  border: 1px solid var(--note-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(31, 39, 51, 0.18);
+  padding: 6px;
+  font-size: 13px;
+  z-index: 20;
+}
+
+.quick-menu-item {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 7px 10px;
+  border: none;
+  background: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+  color: var(--text);
+  cursor: pointer;
+}
+
+.quick-menu-item:hover {
+  background: var(--bg);
+}
+
+.quick-menu-item.active {
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.quick-menu-label {
+  padding: 8px 10px 2px;
+  font-size: 11px;
+  color: #9aa7bd;
+}
+
+.quick-menu-separator {
+  height: 1px;
+  background: var(--note-border);
+  margin: 4px 2px;
 }

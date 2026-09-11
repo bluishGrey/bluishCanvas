@@ -23,12 +23,15 @@
   </div>
 
   <div id="toolbar">
+    <span id="next-shape-label">사각형</span>
     <span id="zoom-label">100%</span>
     <button id="reset-view" type="button">화면 초기화</button>
   </div>
 
   <div id="hint">
     빈 곳 <b>더블클릭</b> → 메모 생성 &nbsp;·&nbsp;
+    빈 곳 <b>우클릭</b> → 퀵메뉴(메모 추가 / 도형 전환) &nbsp;·&nbsp;
+    <b>1/2/3</b> → 다음 생성 도형(사각형/원/마름모) &nbsp;·&nbsp;
     빈 곳 <b>좌클릭 드래그</b> → 영역으로 여러 메모 선택 &nbsp;·&nbsp;
     <b>휠클릭</b> 또는 <b>Ctrl+좌클릭 드래그</b> → 화면 이동 &nbsp;·&nbsp;
     <b>스크롤</b> → 확대 / 축소 &nbsp;·&nbsp;
@@ -39,6 +42,16 @@
     <b>Delete</b> → 선택 메모 삭제 &nbsp;·&nbsp;
     <b>Ctrl+Z</b> → 실행취소 &nbsp;·&nbsp;
     <b>Ctrl+Shift+Z</b> → 다시실행
+  </div>
+
+  <!-- 빈 곳 우클릭 시 뜨는 퀵메뉴: 메모 추가 + 다음 생성 도형 전환 -->
+  <div id="quick-menu" hidden>
+    <button type="button" class="quick-menu-item" data-action="create">여기에 메모 추가</button>
+    <div class="quick-menu-separator"></div>
+    <div class="quick-menu-label">다음 생성 도형</div>
+    <button type="button" class="quick-menu-item shape-item" data-shape="rect">▭ 사각형</button>
+    <button type="button" class="quick-menu-item shape-item" data-shape="ellipse">◯ 원</button>
+    <button type="button" class="quick-menu-item shape-item" data-shape="diamond">◇ 마름모</button>
   </div>
 
   <script src="app.js"></script>
