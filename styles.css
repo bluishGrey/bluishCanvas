@@ -1,0 +1,143 @@
+* {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+:root {
+  --bg: #f4f6fa;
+  --grid-dot: #d3dae6;
+  --note-bg: #ffffff;
+  --note-border: #b9c6dd;
+  --accent: #3b6fd4;
+  --text: #1f2733;
+}
+
+html,
+body {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  font-family: -apple-system, "Segoe UI", "Malgun Gothic", sans-serif;
+  color: var(--text);
+}
+
+/* ===== 캔버스 뷰포트 ===== */
+#canvas {
+  position: fixed;
+  inset: 0;
+  background-color: var(--bg);
+  /* 점 격자. 크기/위치는 app.js 에서 팬·줌에 맞춰 갱신한다. */
+  background-image: radial-gradient(circle, var(--grid-dot) 1.4px, transparent 1.4px);
+  background-size: 24px 24px;
+  cursor: grab;
+  user-select: none;
+  overflow: hidden;
+}
+
+#canvas.panning {
+  cursor: grabbing;
+}
+
+/* ===== 무한 평면 ===== */
+#world {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 0;
+  height: 0;
+  transform-origin: 0 0;
+}
+
+/* ===== 메모 카드 ===== */
+.note {
+  position: absolute;
+  width: 170px;
+  min-height: 46px;
+  background: var(--note-bg);
+  border: 1px solid var(--note-border);
+  border-radius: 10px;
+  box-shadow: 0 4px 14px rgba(31, 39, 51, 0.12);
+  padding: 10px 12px;
+  cursor: grab;
+}
+
+.note.dragging {
+  cursor: grabbing;
+  box-shadow: 0 10px 26px rgba(31, 39, 51, 0.22);
+}
+
+.note-text {
+  min-height: 22px;
+  font-size: 14px;
+  line-height: 1.5;
+  outline: none;
+  white-space: pre-wrap;
+  word-break: break-word;
+  user-select: text;
+}
+
+.note-text:focus {
+  cursor: text;
+}
+
+/* 비어 있을 때 안내 문구 */
+.note-text:empty::before {
+  content: attr(data-placeholder);
+  color: #9aa7bd;
+}
+
+/* ===== 하단 UI ===== */
+#toolbar {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 10px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--note-border);
+  border-radius: 8px;
+  font-size: 13px;
+  backdrop-filter: blur(4px);
+}
+
+#zoom-label {
+  min-width: 42px;
+  text-align: center;
+  font-variant-numeric: tabular-nums;
+}
+
+#reset-view {
+  border: 1px solid var(--note-border);
+  background: #fff;
+  border-radius: 6px;
+  padding: 4px 10px;
+  font-size: 13px;
+  cursor: pointer;
+}
+
+#reset-view:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+#hint {
+  position: fixed;
+  bottom: 14px;
+  left: 50%;
+  transform: translateX(-50%);
+  padding: 7px 14px;
+  background: rgba(255, 255, 255, 0.9);
+  border: 1px solid var(--note-border);
+  border-radius: 999px;
+  font-size: 12.5px;
+  color: #55617a;
+  white-space: nowrap;
+  backdrop-filter: blur(4px);
+}
+
+#hint b {
+  color: var(--text);
+}

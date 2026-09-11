@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>bluishCanvas</title>
+  <link rel="stylesheet" href="styles.css" />
+</head>
+<body>
+  <!-- 화면에 고정된 뷰포트. 이 안에서 팬/줌이 일어난다. -->
+  <div id="canvas">
+    <!-- 모든 메모가 들어가는 무한 평면. transform 으로 통째로 움직인다. -->
+    <div id="world"></div>
+  </div>
+
+  <div id="toolbar">
+    <span id="zoom-label">100%</span>
+    <button id="reset-view" type="button">화면 초기화</button>
+  </div>
+
+  <div id="hint">
+    빈 곳 <b>더블클릭</b> → 메모 생성 &nbsp;·&nbsp;
+    빈 곳 <b>드래그</b> → 화면 이동 &nbsp;·&nbsp;
+    <b>스크롤</b> → 확대 / 축소 &nbsp;·&nbsp;
+    메모 <b>더블클릭</b> → 글자 편집
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>
