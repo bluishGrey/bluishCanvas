@@ -12,6 +12,7 @@
 const canvas = document.getElementById("canvas");
 const world = document.getElementById("world");
 const selectionBoxEl = document.getElementById("selection-box");
+const resizeHandlesEl = document.getElementById("resize-handles");
 const zoomLabel = document.getElementById("zoom-label");
 const resetBtn = document.getElementById("reset-view");
 
@@ -19,6 +20,9 @@ const STORAGE_KEY = "bluishCanvas.v1";
 const MIN_SCALE = 0.2;
 const MAX_SCALE = 4;
 const MAX_HISTORY = 50;
+const DEFAULT_NOTE_W = 170;
+const DEFAULT_NOTE_H = 70;
+const MIN_NOTE_SIZE = 60; // 메모가 이보다 작게 줄어들지는 않는다
 
 const view = { x: 0, y: 0, scale: 1 };
 let notes = [];
@@ -51,6 +55,11 @@ function load() {
     const data = JSON.parse(raw);
     if (data.view) Object.assign(view, data.view);
     notes = Array.isArray(data.notes) ? data.notes : [];
+    // 크기 조절 기능이 생기기 전에 저장된 메모는 w/h 가 없으므로 기본값을 채워준다.
+    notes.forEach((n) => {
+      if (typeof n.w !== "number") n.w = DEFAULT_NOTE_W;
+      if (typeof n.h !== "number") n.h = DEFAULT_NOTE_H;
+    });
     nextId = data.nextId || notes.length + 1;
   } catch (e) {
     console.warn("불러오기 실패:", e);
@@ -86,6 +95,7 @@ function restoreSnapshot(snapshot) {
   nextId = snapshot.nextId;
   selectedIds = new Set(); // 대상이 바뀌므로 선택은 비운다
   notes.forEach(renderNote);
+  updateHandles();
   save();
   isRestoringHistory = false;
 }
@@ -113,6 +123,8 @@ function applyTransform() {
   canvas.style.backgroundPosition = `${view.x}px ${view.y}px`;
 
   zoomLabel.textContent = `${Math.round(view.scale * 100)}%`;
+
+  updateHandles(); // 팬/줌으로 화면이 움직이면 크기조절 핸들 위치도 같이 갱신
 }
 
 function screenToWorld(sx, sy) {
@@ -144,6 +156,7 @@ function setSelection(idList) {
     }
   });
   selectedIds = next;
+  updateHandles();
 }
 
 function selectOnly(id) {
@@ -171,10 +184,184 @@ function notesInScreenRect(rx1, ry1, rx2, ry2) {
   return ids;
 }
 
+/* ===== 크기조절 핸들 ===== */
+
+// 선택된 메모(들)를 감싸는 사각형의 네 모서리에 핸들을 배치한다. (화면 좌표 기준)
+function updateHandles() {
+  if (selectedIds.size === 0) {
+    resizeHandlesEl.hidden = true;
+    return;
+  }
+
+  const canvasRect = canvas.getBoundingClientRect();
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+
+  selectedIds.forEach((id) => {
+    const el = noteEl(id);
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    left = Math.min(left, r.left);
+    top = Math.min(top, r.top);
+    right = Math.max(right, r.right);
+    bottom = Math.max(bottom, r.bottom);
+  });
+
+  if (!isFinite(left)) {
+    resizeHandlesEl.hidden = true;
+    return;
+  }
+
+  const corners = {
+    nw: { x: left - canvasRect.left, y: top - canvasRect.top },
+    ne: { x: right - canvasRect.left, y: top - canvasRect.top },
+    sw: { x: left - canvasRect.left, y: bottom - canvasRect.top },
+    se: { x: right - canvasRect.left, y: bottom - canvasRect.top },
+  };
+
+  Object.entries(corners).forEach(([corner, pos]) => {
+    const handle = resizeHandlesEl.querySelector(`.resize-handle[data-corner="${corner}"]`);
+    if (handle) {
+      handle.style.left = `${pos.x}px`;
+      handle.style.top = `${pos.y}px`;
+    }
+  });
+
+  resizeHandlesEl.hidden = false;
+}
+
+// corner 를 쥐고 끌 때, 이 메모에서 "움직이지 않고 고정되는" 반대쪽 모서리의 월드 좌표.
+function fixedCornerOf(corner, n) {
+  switch (corner) {
+    case "se":
+      return { x: n.x, y: n.y };
+    case "nw":
+      return { x: n.x + n.w, y: n.y + n.h };
+    case "ne":
+      return { x: n.x, y: n.y + n.h };
+    case "sw":
+      return { x: n.x + n.w, y: n.y };
+    default:
+      return { x: n.x, y: n.y };
+  }
+}
+
+function initResizeHandles() {
+  resizeHandlesEl.querySelectorAll(".resize-handle").forEach((handleEl) => {
+    const corner = handleEl.dataset.corner;
+
+    handleEl.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      e.stopPropagation(); // 캔버스의 팬/영역선택 로직으로 번지지 않게 막는다.
+      e.preventDefault();
+
+      const ids = Array.from(selectedIds);
+      if (ids.length === 0) return;
+
+      const startNotes = ids.map((id) => {
+        const n = notes.find((nn) => nn.id === id);
+        return { id, el: noteEl(id), x: n.x, y: n.y, w: n.w, h: n.h };
+      });
+
+      // 선택된 메모 전체를 감싸는 사각형(월드 좌표) — 핸들을 끄는 기준이 되는 틀이다.
+      let bx0 = Infinity;
+      let by0 = Infinity;
+      let bx1 = -Infinity;
+      let by1 = -Infinity;
+      startNotes.forEach((n) => {
+        bx0 = Math.min(bx0, n.x);
+        by0 = Math.min(by0, n.y);
+        bx1 = Math.max(bx1, n.x + n.w);
+        by1 = Math.max(by1, n.y + n.h);
+      });
+      const box = { x: bx0, y: by0, w: bx1 - bx0, h: by1 - by0 };
+      const anchor = fixedCornerOf(corner, box);
+      const startCorner = {
+        x: corner.includes("w") ? bx0 : bx1,
+        y: corner[0] === "n" ? by0 : by1,
+      };
+      const startDist =
+        Math.hypot(startCorner.x - anchor.x, startCorner.y - anchor.y) || 1;
+
+      // 어떤 메모든 MIN_NOTE_SIZE 밑으로 줄어들지 않도록, 허용되는 최소 배율을 미리 구해둔다.
+      const smallestOriginalDim = Math.min(
+        ...startNotes.flatMap((n) => [n.w, n.h])
+      );
+      const minScale = MIN_NOTE_SIZE / smallestOriginalDim;
+
+      let moved = false;
+
+      const onMove = (ev) => {
+        if (
+          !moved &&
+          Math.abs(ev.clientX - e.clientX) + Math.abs(ev.clientY - e.clientY) > 2
+        ) {
+          moved = true;
+        }
+
+        const worldPt = screenToWorld(ev.clientX, ev.clientY);
+        const dist = Math.hypot(worldPt.x - anchor.x, worldPt.y - anchor.y);
+        const scale = Math.max(dist / startDist, minScale, 0.05);
+
+        startNotes.forEach((sn) => {
+          const fixed = fixedCornerOf(corner, sn);
+          const newW = Math.max(MIN_NOTE_SIZE, sn.w * scale);
+          const newH = Math.max(MIN_NOTE_SIZE, sn.h * scale);
+          let newX;
+          let newY;
+          if (corner.includes("w")) {
+            newX = fixed.x - newW;
+          } else {
+            newX = fixed.x;
+          }
+          if (corner[0] === "n") {
+            newY = fixed.y - newH;
+          } else {
+            newY = fixed.y;
+          }
+
+          const n = notes.find((nn) => nn.id === sn.id);
+          if (!n) return;
+          n.x = newX;
+          n.y = newY;
+          n.w = newW;
+          n.h = newH;
+          if (sn.el) {
+            sn.el.style.left = `${newX}px`;
+            sn.el.style.top = `${newY}px`;
+            sn.el.style.width = `${newW}px`;
+            sn.el.style.height = `${newH}px`;
+          }
+        });
+
+        updateHandles();
+      };
+
+      const onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        if (moved) commitChange();
+      };
+
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
+    });
+  });
+}
+
 /* ===== 메모 ===== */
 
 function createNote(worldX, worldY, text = "") {
-  const note = { id: nextId++, x: worldX, y: worldY, text };
+  const note = {
+    id: nextId++,
+    x: worldX,
+    y: worldY,
+    w: DEFAULT_NOTE_W,
+    h: DEFAULT_NOTE_H,
+    text,
+  };
   notes.push(note);
   const el = renderNote(note);
   commitChange();
@@ -207,6 +394,8 @@ function renderNote(note) {
   el.dataset.id = String(note.id);
   el.style.left = `${note.x}px`;
   el.style.top = `${note.y}px`;
+  el.style.width = `${note.w}px`;
+  el.style.height = `${note.h}px`;
 
   const textEl = document.createElement("div");
   textEl.className = "note-text";
@@ -253,9 +442,14 @@ function makeNoteInteractive(el, note, textEl) {
   // --- 클릭으로 선택 + 드래그로 이동 (여러 개가 선택되어 있으면 다같이 이동) ---
   el.addEventListener("mousedown", (e) => {
     if (e.button !== 0) return;
+    if (e.ctrlKey) return; // Ctrl+드래그는 메모 위에서 시작해도 화면 이동으로 취급한다.
     // 이 메모를 편집 중이면 드래그 대신 글자 선택을 허용한다.
     if (document.activeElement === textEl) return;
 
+    // 브라우저 기본 동작을 막는다: 안 막으면 note-text(contentEditable) 위를 클릭할 때마다
+    // 자동으로 그 안에 포커스가 들어가서, 그냥 "선택"만 한 것도 "편집 중"으로 오인되어
+    // Delete/Ctrl+Z 단축키가 먹통이 된다. 드래그 중 텍스트가 파랗게 선택되는 것도 막아준다.
+    e.preventDefault();
     e.stopPropagation(); // 캔버스 쪽 클릭(선택 해제)·드래그 선택 로직으로 번지지 않게 막는다.
 
     // 이미 여러 개가 선택된 상태에서 그 중 하나를 누른 거라면, 선택을 유지한 채
@@ -294,6 +488,7 @@ function makeNoteInteractive(el, note, textEl) {
           p.el.style.top = `${n.y}px`;
         }
       });
+      updateHandles();
     };
 
     const onUp = () => {
@@ -328,11 +523,15 @@ function makeNoteInteractive(el, note, textEl) {
 
 /* ===== 캔버스: 팬 / 줌 / 생성 / 선택 ===== */
 
-// 오른쪽 버튼 드래그 → 화면 이동.
+// 오른쪽 버튼은 지금은 예약만 해둔다 (다음 단계: 메모 사이 화살표 연결).
+// 브라우저 기본 컨텍스트 메뉴만 막아, 나중에 방해되지 않게 한다.
 canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 
+// 화면 이동(팬): 휠(가운데) 버튼 드래그, 또는 Ctrl + 왼쪽 버튼 드래그.
 canvas.addEventListener("mousedown", (e) => {
-  if (e.button !== 2) return;
+  const isPanGesture = e.button === 1 || (e.button === 0 && e.ctrlKey);
+  if (!isPanGesture) return;
+  if (e.button === 1) e.preventDefault(); // 휠 버튼의 브라우저 기본 자동 스크롤 방지
 
   const startX = e.clientX;
   const startY = e.clientY;
@@ -358,12 +557,12 @@ canvas.addEventListener("mousedown", (e) => {
   document.addEventListener("mouseup", onUp);
 });
 
-// 왼쪽 버튼으로 빈 곳을 드래그 → 사각형 영역에 걸친 메모를 모두 선택.
+// 왼쪽 버튼(Ctrl 없이)으로 빈 곳을 드래그 → 사각형 영역에 걸친 메모를 모두 선택.
 // (움직이지 않고 떼면 그냥 클릭이므로, 아래 click 핸들러가 선택 해제를 처리한다)
 let justBoxSelected = false;
 
 canvas.addEventListener("mousedown", (e) => {
-  if (e.button !== 0) return;
+  if (e.button !== 0 || e.ctrlKey) return;
   if (e.target !== canvas) return; // 메모 위에서 시작된 드래그는 각 메모의 핸들러가 처리
 
   const startX = e.clientX;
@@ -410,7 +609,7 @@ canvas.addEventListener("click", (e) => {
 // 빈 곳 더블클릭 → 새 메모 (커서 위치에 대략 중앙 정렬)
 canvas.addEventListener("dblclick", (e) => {
   const p = screenToWorld(e.clientX, e.clientY);
-  const el = createNote(p.x - 85, p.y - 23);
+  const el = createNote(p.x - DEFAULT_NOTE_W / 2, p.y - DEFAULT_NOTE_H / 2);
   el.querySelector(".note-text").focus();
 });
 
@@ -502,6 +701,7 @@ document.addEventListener("keydown", (e) => {
 
 /* ===== 시작 ===== */
 
+initResizeHandles();
 load();
 notes.forEach(renderNote);
 applyTransform();

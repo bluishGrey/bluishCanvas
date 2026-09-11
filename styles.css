@@ -47,6 +47,34 @@ body {
   pointer-events: none;
 }
 
+/* ===== 크기조절 핸들 (화면 좌표, transform 영향 안 받음) ===== */
+#resize-handles {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.resize-handle {
+  position: absolute;
+  width: 10px;
+  height: 10px;
+  margin: -5px 0 0 -5px; /* 자기 좌표(모서리 점)를 중심으로 오도록 */
+  background: #fff;
+  border: 1.5px solid var(--accent);
+  border-radius: 3px;
+  pointer-events: auto;
+}
+
+.resize-handle[data-corner="nw"],
+.resize-handle[data-corner="se"] {
+  cursor: nwse-resize;
+}
+
+.resize-handle[data-corner="ne"],
+.resize-handle[data-corner="sw"] {
+  cursor: nesw-resize;
+}
+
 /* ===== 무한 평면 ===== */
 #world {
   position: absolute;
@@ -58,10 +86,9 @@ body {
 }
 
 /* ===== 메모 카드 ===== */
+/* 가로/세로 크기(width, height)는 app.js 가 인라인 스타일로 지정한다 (크기조절 대상). */
 .note {
   position: absolute;
-  width: 170px;
-  min-height: 46px;
   background: var(--note-bg);
   border: 1px solid var(--note-border);
   border-radius: 10px;
@@ -114,7 +141,9 @@ body {
 }
 
 .note-text {
-  min-height: 22px;
+  height: 100%;
+  overflow-y: auto;
+  overflow-x: hidden;
   font-size: 14px;
   line-height: 1.5;
   outline: none;

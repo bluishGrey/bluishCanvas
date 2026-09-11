@@ -13,6 +13,13 @@
     <div id="world"></div>
     <!-- 빈 곳 좌클릭 드래그 시 나타나는 사각형 다중 선택 영역 (화면 좌표 기준) -->
     <div id="selection-box" hidden></div>
+    <!-- 메모 선택 시 모서리에 나타나는 크기조절 핸들 (화면 좌표 기준) -->
+    <div id="resize-handles" hidden>
+      <div class="resize-handle" data-corner="nw"></div>
+      <div class="resize-handle" data-corner="ne"></div>
+      <div class="resize-handle" data-corner="sw"></div>
+      <div class="resize-handle" data-corner="se"></div>
+    </div>
   </div>
 
   <div id="toolbar">
@@ -23,9 +30,10 @@
   <div id="hint">
     빈 곳 <b>더블클릭</b> → 메모 생성 &nbsp;·&nbsp;
     빈 곳 <b>좌클릭 드래그</b> → 영역으로 여러 메모 선택 &nbsp;·&nbsp;
-    빈 곳 <b>우클릭 드래그</b> → 화면 이동 &nbsp;·&nbsp;
+    <b>휠클릭</b> 또는 <b>Ctrl+좌클릭 드래그</b> → 화면 이동 &nbsp;·&nbsp;
     <b>스크롤</b> → 확대 / 축소 &nbsp;·&nbsp;
     메모 <b>클릭/드래그</b> → 선택 / 이동 &nbsp;·&nbsp;
+    선택 후 모서리 <b>핸들 드래그</b> → 크기 조절 &nbsp;·&nbsp;
     메모 <b>더블클릭</b> → 글자 편집 &nbsp;·&nbsp;
     <b>Delete</b> → 선택 메모 삭제 &nbsp;·&nbsp;
     <b>Ctrl+Z</b> → 실행취소 &nbsp;·&nbsp;
