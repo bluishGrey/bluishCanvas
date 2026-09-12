@@ -434,7 +434,60 @@ body {
   border-color: var(--accent);
 }
 
-/* ===== 조작법 안내: "?" 버튼 + 팝업 ===== */
+/* ===== 다음 생성 도형 미니 팔레트 (Excalidraw 스타일 아이콘 열) ===== */
+#shape-palette {
+  display: flex;
+  gap: 4px;
+  padding-right: 8px;
+  border-right: 1px solid var(--note-border);
+}
+
+.shape-palette-btn {
+  position: relative;
+  width: 26px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--note-border);
+  border-radius: 6px;
+  background: #fff;
+  font-size: 14px;
+  color: #55617a;
+  cursor: pointer;
+  padding: 0;
+}
+
+.shape-palette-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.shape-palette-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
+/* 아이콘 모서리에 작게 붙는 단축키 숫자 배지 */
+.shape-key {
+  position: absolute;
+  bottom: -4px;
+  right: -4px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: #fff;
+  border: 1px solid var(--note-border);
+  font-size: 8px;
+  line-height: 11px;
+  text-align: center;
+  color: #55617a;
+}
+
+/* ===== 조작법 안내: "?" 버튼 + 팝업 =====
+ * 화면 전체를 덮는 어두운 오버레이 없이, "?" 버튼 바로 위(오른쪽 아래 고정 위치)에서
+ * 팝업이 나타나는 것처럼 앵커링한다 — 버튼에서 확장되어 나오는 느낌을 주기 위함. */
 #help-btn {
   position: fixed;
   right: 14px;
@@ -457,43 +510,65 @@ body {
   color: var(--accent);
 }
 
-#help-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(31, 39, 51, 0.25);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 30;
-}
-
-#help-overlay[hidden] {
-  display: none;
-}
-
 #help-popup {
-  position: relative;
-  width: calc(100% - 48px);
-  max-width: 640px;
-  max-height: 80vh;
+  position: fixed;
+  right: 14px;
+  bottom: 60px; /* "?" 버튼(34px) + 여백만큼 그 위에 */
+  width: 380px;
+  max-width: calc(100vw - 28px);
+  max-height: 70vh;
   overflow-y: auto;
   background: #fff;
   border-radius: 10px;
   box-shadow: 0 16px 48px rgba(31, 39, 51, 0.3);
-  padding: 22px 24px;
+  padding: 16px 18px;
+  z-index: 30;
+}
+
+#help-popup[hidden] {
+  display: none;
 }
 
 #help-title {
   font-weight: 700;
-  font-size: 15px;
+  font-size: 14px;
   color: var(--text);
   margin-bottom: 10px;
+  padding-right: 20px; /* 닫기(×) 버튼과 안 겹치도록 */
 }
 
 #help-content {
-  font-size: 13px;
-  line-height: 1.9;
+  font-size: 12.5px;
+  line-height: 1.7;
   color: #55617a;
+}
+
+#help-content section {
+  margin-bottom: 12px;
+}
+
+#help-content section:last-child {
+  margin-bottom: 0;
+}
+
+#help-content h3 {
+  margin: 0 0 4px;
+  font-size: 11.5px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+#help-content ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+#help-content li {
+  margin-bottom: 3px;
+}
+
+#help-content li:last-child {
+  margin-bottom: 0;
 }
 
 #help-content b {

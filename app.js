@@ -40,7 +40,7 @@ const canvasSearchCountEl = document.getElementById("canvas-search-count");
 const canvasSearchCloseBtn = document.getElementById("canvas-search-close");
 const canvasSearchBtn = document.getElementById("canvas-search-btn");
 const helpBtn = document.getElementById("help-btn");
-const helpOverlay = document.getElementById("help-overlay");
+const helpPopup = document.getElementById("help-popup");
 const helpCloseBtn = document.getElementById("help-close-btn");
 const SVG_NS = "http://www.w3.org/2000/svg";
 
@@ -2180,20 +2180,28 @@ function setNextShape(shape) {
   if (!SHAPE_LABELS[shape]) return;
   nextShape = shape;
   nextShapeLabelEl.textContent = SHAPE_LABELS[shape];
-  updateQuickMenuShapeHighlight();
+  updateShapeUIHighlight();
 }
 
-function updateQuickMenuShapeHighlight() {
+// 도형 선택 상태를 보여주는 두 곳(퀵메뉴, 툴바의 미니 팔레트)을 한꺼번에 갱신한다.
+function updateShapeUIHighlight() {
   quickMenuEl.querySelectorAll(".shape-item").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.shape === nextShape);
   });
+  document.querySelectorAll(".shape-palette-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.shape === nextShape);
+  });
 }
+
+document.querySelectorAll(".shape-palette-btn").forEach((btn) => {
+  btn.addEventListener("click", () => setNextShape(btn.dataset.shape));
+});
 
 let quickMenuWorldPos = null; // 퀵메뉴를 열었을 때의 월드 좌표 (거기에 메모를 추가하려고 기억해둠)
 
 function openQuickMenu(clientX, clientY, worldPos) {
   quickMenuWorldPos = worldPos;
-  updateQuickMenuShapeHighlight();
+  updateShapeUIHighlight();
   quickMenuEl.hidden = false;
 
   // 화면 밖으로 나가지 않도록, 실제 크기를 잰 뒤 위치를 보정한다.
@@ -2608,26 +2616,31 @@ canvasSearchInput.addEventListener("keydown", (e) => {
 canvasSearchCloseBtn.addEventListener("click", closeCanvasSearch);
 canvasSearchBtn.addEventListener("click", openCanvasSearch);
 
-/* ===== 조작법 안내 팝업 ("?" 버튼) ===== */
+/* ===== 조작법 안내 팝업 ("?" 버튼) =====
+ * 화면 전체를 덮는 오버레이가 없으므로(요청에 따라 제거), "바깥 클릭으로 닫기"는
+ * document 전체의 클릭을 감시해서 그 클릭이 팝업 안도, 여는 버튼도 아닐 때만 닫는
+ * 방식으로 직접 구현한다. */
 
 function openHelp() {
-  helpOverlay.hidden = false;
+  helpPopup.hidden = false;
 }
 
 function closeHelp() {
-  helpOverlay.hidden = true;
+  helpPopup.hidden = true;
 }
 
 helpBtn.addEventListener("click", openHelp);
 helpCloseBtn.addEventListener("click", closeHelp);
-// 팝업 배경(어둡게 깔린 부분) 클릭 시 닫기 — 안쪽 #help-popup 클릭은 무시해야 하므로,
-// 이벤트가 실제로 #help-overlay 자신에서 시작됐을 때만(자식 요소에서 버블링된 게
-// 아닐 때만) 닫는다.
-helpOverlay.addEventListener("click", (e) => {
-  if (e.target === helpOverlay) closeHelp();
+document.addEventListener("click", (e) => {
+  if (helpPopup.hidden) return;
+  // 여는 버튼 자신의 클릭까지 이 리스너가 즉시 "바깥 클릭"으로 오인해 닫아버리지
+  // 않도록 helpBtn 클릭은 무시한다(버튼 click 핸들러가 먼저 열고, 같은 클릭이
+  // document 까지 버블링되어 이 리스너에도 도달하기 때문).
+  if (helpPopup.contains(e.target) || e.target === helpBtn || helpBtn.contains(e.target)) return;
+  closeHelp();
 });
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape" && !helpOverlay.hidden) closeHelp();
+  if (e.key === "Escape" && !helpPopup.hidden) closeHelp();
 });
 
 /* ===== 시작 ===== */
