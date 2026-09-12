@@ -238,8 +238,10 @@ body {
 .note-shape {
   position: absolute;
   inset: 0;
-  background: var(--note-bg);
-  border: 1px solid var(--note-border);
+  /* --note-custom-bg / --note-border-width 는 꾸미기 패널에서 메모별로 인라인
+     스타일(app.js applyNoteStyleToEl)로 설정한다. 지정 안 하면 기존 기본값 그대로. */
+  background: var(--note-custom-bg, var(--note-bg));
+  border: var(--note-border-width, 1px) solid var(--note-border);
   border-radius: 10px; /* 기본값: 사각형 */
   box-shadow: 0 4px 14px rgba(31, 39, 51, 0.12);
   pointer-events: none;
@@ -269,8 +271,11 @@ body {
 .note[data-shape="diamond"] .note-shape::after {
   content: "";
   position: absolute;
-  inset: 1px;
-  background: var(--note-bg);
+  /* 마름모는 "테두리색 배경 위에 안쪽에서 본문색으로 덮어 그리기" 방식이라,
+     테두리 굵기는 이 안쪽 레이어를 얼마나 띄우는지(inset)로 조절한다 —
+     많이 띄울수록 바깥쪽 테두리색이 더 두껍게 남아 보인다. */
+  inset: var(--note-border-width, 1px);
+  background: var(--note-custom-bg, var(--note-bg));
   clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
 }
 
@@ -517,6 +522,88 @@ body {
   flex: 1;
   overflow-y: auto;
   padding: 6px 4px;
+}
+
+/* ===== 사이드바: 메모 꾸미기 패널 ===== */
+
+#style-panel {
+  flex-shrink: 0;
+  border-top: 1px solid var(--note-border);
+  padding: 10px 8px;
+  max-height: 260px;
+  overflow-y: auto;
+}
+
+#style-panel-title {
+  font-weight: 600;
+  font-size: 12px;
+  color: #55617a;
+  margin-bottom: 8px;
+}
+
+#style-panel-empty {
+  font-size: 12px;
+  color: #9aa7bd;
+}
+
+.style-group {
+  margin-bottom: 10px;
+}
+
+.style-group:last-child {
+  margin-bottom: 0;
+}
+
+.style-group-label {
+  font-size: 11px;
+  color: #9aa7bd;
+  margin-bottom: 4px;
+}
+
+.style-swatches {
+  display: flex;
+  gap: 6px;
+}
+
+.style-swatch {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  border: 1px solid var(--note-border);
+  cursor: pointer;
+  padding: 0;
+}
+
+.style-swatch.active {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.style-btn-row {
+  display: flex;
+  gap: 4px;
+}
+
+.style-btn-row button {
+  flex: 1;
+  border: 1px solid var(--note-border);
+  background: #fff;
+  border-radius: 6px;
+  padding: 4px 2px;
+  font-size: 11.5px;
+  color: #55617a;
+  cursor: pointer;
+}
+
+.style-btn-row button:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.style-btn-row button.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }
 
 #sidebar-footer {

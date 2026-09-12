@@ -31,6 +31,8 @@ const importBtn = document.getElementById("import-btn");
 const importFileInput = document.getElementById("import-file-input");
 const lastExportInfoEl = document.getElementById("last-export-info");
 const lastImportInfoEl = document.getElementById("last-import-info");
+const stylePanelEmptyEl = document.getElementById("style-panel-empty");
+const stylePanelBodyEl = document.getElementById("style-panel-body");
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 const STORAGE_KEY = "bluishCanvas.v2";
@@ -43,6 +45,13 @@ const DEFAULT_NOTE_H = 70;
 const MIN_NOTE_SIZE = 60; // 메모가 이보다 작게 줄어들지는 않는다
 const DEFAULT_SHAPE = "rect";
 const SHAPE_LABELS = { rect: "사각형", ellipse: "원", diamond: "마름모" };
+
+// 메모 꾸미기(사이드바 "꾸미기" 패널)의 기본값. 기존 메모(이 필드들이 아직 없는 데이터)를
+// backfillNoteDefaults 로 채울 때도 이 값들을 쓰므로, 꾸미기 기능이 생기기 전 메모의
+// 겉모습은 이 상수들이 지금 CSS 기본값과 똑같은 한 그대로 유지된다.
+const DEFAULT_FONT_SIZE = 14;
+const DEFAULT_TEXT_ALIGN = "center";
+const DEFAULT_BORDER_WIDTH = 1;
 
 const view = { x: 0, y: 0, scale: 1 };
 let notes = [];
@@ -99,6 +108,10 @@ function backfillNoteDefaults(noteList) {
     if (typeof n.w !== "number") n.w = DEFAULT_NOTE_W;
     if (typeof n.h !== "number") n.h = DEFAULT_NOTE_H;
     if (!n.shape) n.shape = DEFAULT_SHAPE;
+    if (n.bg === undefined) n.bg = null; // null = 커스텀 배경색 없음(기본 흰색)
+    if (typeof n.fontSize !== "number") n.fontSize = DEFAULT_FONT_SIZE;
+    if (!n.textAlign) n.textAlign = DEFAULT_TEXT_ALIGN;
+    if (typeof n.borderWidth !== "number") n.borderWidth = DEFAULT_BORDER_WIDTH;
   });
 }
 
@@ -262,6 +275,7 @@ function restoreSnapshot(snapshot) {
   notes.forEach(renderNote);
   arrows.forEach(renderArrow);
   updateHandles();
+  updateStylePanel();
   save();
   isRestoringHistory = false;
 }
@@ -300,6 +314,7 @@ function loadPageIntoGlobals(pageData) {
   notes.forEach(renderNote);
   arrows.forEach(renderArrow);
   applyTransform(); // 내부에서 updateHandles 도 같이 갱신된다
+  updateStylePanel();
 }
 
 function switchToPage(pageId) {
@@ -840,6 +855,28 @@ pageTreeEl.addEventListener("click", (e) => {
 addPageBtn.addEventListener("click", () => createPage(null));
 addFolderBtn.addEventListener("click", () => createFolder(null));
 
+/* ===== 사이드바: 꾸미기 패널 ===== */
+
+document.querySelectorAll(".style-swatch").forEach((btn) => {
+  btn.addEventListener("click", () => {
+    // 흰색은 "기본값(null)"으로 저장한다 — 굳이 커스텀 배경 데이터를 남기지 않아도
+    // 어차피 기본 배경색과 시각적으로 같기 때문.
+    const color = btn.dataset.color === "#ffffff" ? null : btn.dataset.color;
+    applyStyleToSelection("bg", color);
+  });
+});
+
+document.querySelectorAll("#style-panel-body [data-style-field]").forEach((row) => {
+  const field = row.dataset.styleField;
+  row.querySelectorAll("button").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const raw = btn.dataset.value;
+      const value = field === "textAlign" ? raw : Number(raw);
+      applyStyleToSelection(field, value);
+    });
+  });
+});
+
 /* ===== 사이드바 접기 / 펼치기 ===== */
 
 function setSidebarCollapsed(collapsed) {
@@ -1147,6 +1184,7 @@ function setSelection(idList) {
   });
   selectedIds = next;
   updateHandles();
+  updateStylePanel();
 }
 
 function selectOnly(id) {
@@ -1812,6 +1850,10 @@ function createNote(worldX, worldY, text = "", shape = nextShape) {
     h: DEFAULT_NOTE_H,
     text,
     shape,
+    bg: null,
+    fontSize: DEFAULT_FONT_SIZE,
+    textAlign: DEFAULT_TEXT_ALIGN,
+    borderWidth: DEFAULT_BORDER_WIDTH,
   };
   notes.push(note);
   const el = renderNote(note);
@@ -1837,6 +1879,86 @@ function removeNoteFromState(id) {
 function deleteNote(id) {
   removeNoteFromState(id);
   commitChange();
+}
+
+/* ===== 메모 꾸미기 (사이드바 "꾸미기" 패널) =====
+ * 배경색/글자크기/정렬/테두리굵기는 note 객체의 필드(bg/fontSize/textAlign/borderWidth)로
+ * 저장되고, 다른 note 필드들과 똑같이 cloneNotes/save/export·import 를 통째로 타고 다니므로
+ * 이 기능만을 위한 별도 직렬화 코드는 필요 없다 — 값을 채우고 화면에 반영하는 것만 신경 쓰면 된다. */
+
+// 배경색/테두리굵기는 사각형·원·마름모(clip-path 로 잘라낸 도형이라 실제 배경/테두리가
+// 가상 요소(::after)에 있음) 모두에서 똑같이 동작해야 해서, .note 엘리먼트에 CSS 변수로
+// 얹어두고 styles.css 쪽에서 도형별 규칙이 각자 그 변수를 참조하게 했다 — 그러면 여기서
+// 도형이 뭔지 따로 분기할 필요가 없다.
+function applyNoteStyleToEl(el, textEl, note) {
+  if (note.bg) {
+    el.style.setProperty("--note-custom-bg", note.bg);
+  } else {
+    el.style.removeProperty("--note-custom-bg");
+  }
+  el.style.setProperty("--note-border-width", `${note.borderWidth ?? DEFAULT_BORDER_WIDTH}px`);
+
+  textEl.style.fontSize = `${note.fontSize ?? DEFAULT_FONT_SIZE}px`;
+  const align = note.textAlign || DEFAULT_TEXT_ALIGN;
+  textEl.style.textAlign = align;
+  // text-align 은 줄바꿈된 텍스트 안에서만 효과가 있어서(짧은 한 줄짜리 글자는 어차피
+  // 내용만큼만 차지하는 박스가 가운데 있으니 안 움직여 보인다), 그 박스 자체를
+  // 왼쪽/가운데/오른쪽으로 옮기는 justify-content 도 같이 맞춰줘야 진짜 정렬처럼 보인다.
+  textEl.style.justifyContent = align === "left" ? "flex-start" : align === "right" ? "flex-end" : "center";
+}
+
+// 이미 화면에 그려진 메모의 스타일만 다시 적용한다 (전체 재렌더 없이).
+function updateNoteStyleDOM(note) {
+  const el = noteEl(note.id);
+  if (!el) return;
+  const textEl = el.querySelector(".note-text");
+  if (!textEl) return;
+  applyNoteStyleToEl(el, textEl, note);
+}
+
+// 선택된 메모(들) 전부에 같은 스타일 값을 적용하고, 한 번에 히스토리로 기록한다.
+function applyStyleToSelection(field, value) {
+  if (selectedIds.size === 0) return;
+  selectedIds.forEach((id) => {
+    const note = getNote(id);
+    if (!note) return;
+    note[field] = value;
+    updateNoteStyleDOM(note);
+  });
+  updateStylePanel();
+  commitChange();
+}
+
+function setStyleButtonRowActive(field, value) {
+  document.querySelectorAll(`#style-panel-body [data-style-field="${field}"] button`).forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.value === String(value));
+  });
+}
+
+// 사이드바 꾸미기 패널을 지금 선택 상태에 맞게 갱신한다. 메모 선택이 바뀔 때마다
+// (setSelection, undo/redo 복원, 페이지 전환) 호출된다.
+function updateStylePanel() {
+  if (selectedIds.size === 0) {
+    stylePanelEmptyEl.hidden = false;
+    stylePanelBodyEl.hidden = true;
+    return;
+  }
+  const firstId = selectedIds.values().next().value;
+  const first = getNote(firstId);
+  if (!first) return;
+
+  stylePanelEmptyEl.hidden = true;
+  stylePanelBodyEl.hidden = false;
+
+  // 다중 선택 시에도 표시는 "맨 처음 선택된 메모" 기준 하나만 보여준다(실제 적용은
+  // 항상 선택된 전체에 동일하게 이루어진다 — 이 강조 표시는 참고용일 뿐).
+  document.querySelectorAll(".style-swatch").forEach((btn) => {
+    // 흰색(#ffffff) 프리셋은 bg:null(커스텀 배경 없음)과 시각적으로 같으므로 같은 것으로 취급한다.
+    btn.classList.toggle("active", (first.bg || "#ffffff") === btn.dataset.color);
+  });
+  setStyleButtonRowActive("fontSize", first.fontSize ?? DEFAULT_FONT_SIZE);
+  setStyleButtonRowActive("textAlign", first.textAlign || DEFAULT_TEXT_ALIGN);
+  setStyleButtonRowActive("borderWidth", first.borderWidth ?? DEFAULT_BORDER_WIDTH);
 }
 
 function renderNote(note) {
@@ -1867,6 +1989,8 @@ function renderNote(note) {
   textEl.spellcheck = false;
   textEl.dataset.placeholder = "내용 입력...";
   textEl.textContent = note.text;
+
+  applyNoteStyleToEl(el, textEl, note); // 배경색/글자크기/정렬/테두리굵기(꾸미기 패널) 반영
 
   let textBeforeEdit = note.text;
   textEl.addEventListener("focus", () => {
@@ -2351,4 +2475,5 @@ historyIndex = 0;
 
 renderSidebar();
 updateBackupInfoDisplay();
+updateStylePanel();
 save();

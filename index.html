@@ -20,6 +20,48 @@
     </div>
     <div id="page-tree"></div>
 
+    <!-- 메모 꾸미기 패널: 메모(들)를 선택하면 배경색/텍스트크기/정렬/테두리굵기를 바로 조절 -->
+    <div id="style-panel">
+      <div id="style-panel-title">꾸미기</div>
+      <div id="style-panel-empty">메모를 선택하세요</div>
+      <div id="style-panel-body" hidden>
+        <div class="style-group">
+          <div class="style-group-label">배경색</div>
+          <div class="style-swatches">
+            <button type="button" class="style-swatch" data-color="#ffffff" style="background:#ffffff" title="흰색"></button>
+            <button type="button" class="style-swatch" data-color="#fff3bf" style="background:#fff3bf" title="노랑"></button>
+            <button type="button" class="style-swatch" data-color="#d3f9d8" style="background:#d3f9d8" title="초록"></button>
+            <button type="button" class="style-swatch" data-color="#ffe3e3" style="background:#ffe3e3" title="빨강"></button>
+            <button type="button" class="style-swatch" data-color="#d0ebff" style="background:#d0ebff" title="파랑"></button>
+          </div>
+        </div>
+        <div class="style-group">
+          <div class="style-group-label">텍스트 크기</div>
+          <div class="style-btn-row" data-style-field="fontSize">
+            <button type="button" data-value="12">작게</button>
+            <button type="button" data-value="14">보통</button>
+            <button type="button" data-value="18">크게</button>
+          </div>
+        </div>
+        <div class="style-group">
+          <div class="style-group-label">텍스트 정렬</div>
+          <div class="style-btn-row" data-style-field="textAlign">
+            <button type="button" data-value="left">왼쪽</button>
+            <button type="button" data-value="center">가운데</button>
+            <button type="button" data-value="right">오른쪽</button>
+          </div>
+        </div>
+        <div class="style-group">
+          <div class="style-group-label">테두리 굵기</div>
+          <div class="style-btn-row" data-style-field="borderWidth">
+            <button type="button" data-value="1">얇게</button>
+            <button type="button" data-value="2">보통</button>
+            <button type="button" data-value="4">굵게</button>
+          </div>
+        </div>
+      </div>
+    </div>
+
     <!-- 전체(모든 페이지/폴더) 내보내기 · 가져오기 -->
     <div id="sidebar-footer">
       <div id="backup-info">
