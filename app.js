@@ -38,6 +38,10 @@ const canvasSearchEl = document.getElementById("canvas-search");
 const canvasSearchInput = document.getElementById("canvas-search-input");
 const canvasSearchCountEl = document.getElementById("canvas-search-count");
 const canvasSearchCloseBtn = document.getElementById("canvas-search-close");
+const canvasSearchBtn = document.getElementById("canvas-search-btn");
+const helpBtn = document.getElementById("help-btn");
+const helpOverlay = document.getElementById("help-overlay");
+const helpCloseBtn = document.getElementById("help-close-btn");
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 const STORAGE_KEY = "bluishCanvas.v2";
@@ -49,7 +53,7 @@ const DEFAULT_NOTE_W = 170;
 const DEFAULT_NOTE_H = 70;
 const MIN_NOTE_SIZE = 60; // 메모가 이보다 작게 줄어들지는 않는다
 const DEFAULT_SHAPE = "rect";
-const SHAPE_LABELS = { rect: "사각형", ellipse: "원", diamond: "마름모" };
+const SHAPE_LABELS = { rect: "사각형(1)", ellipse: "원(2)", diamond: "마름모(3)" };
 
 // 메모 꾸미기(사이드바 "꾸미기" 패널)의 기본값. 기존 메모(이 필드들이 아직 없는 데이터)를
 // backfillNoteDefaults 로 채울 때도 이 값들을 쓰므로, 꾸미기 기능이 생기기 전 메모의
@@ -2602,6 +2606,29 @@ canvasSearchInput.addEventListener("keydown", (e) => {
   e.stopPropagation(); // Delete/1·2·3/Ctrl+Z 등 다른 전역 단축키로 새지 않게
 });
 canvasSearchCloseBtn.addEventListener("click", closeCanvasSearch);
+canvasSearchBtn.addEventListener("click", openCanvasSearch);
+
+/* ===== 조작법 안내 팝업 ("?" 버튼) ===== */
+
+function openHelp() {
+  helpOverlay.hidden = false;
+}
+
+function closeHelp() {
+  helpOverlay.hidden = true;
+}
+
+helpBtn.addEventListener("click", openHelp);
+helpCloseBtn.addEventListener("click", closeHelp);
+// 팝업 배경(어둡게 깔린 부분) 클릭 시 닫기 — 안쪽 #help-popup 클릭은 무시해야 하므로,
+// 이벤트가 실제로 #help-overlay 자신에서 시작됐을 때만(자식 요소에서 버블링된 게
+// 아닐 때만) 닫는다.
+helpOverlay.addEventListener("click", (e) => {
+  if (e.target === helpOverlay) closeHelp();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !helpOverlay.hidden) closeHelp();
+});
 
 /* ===== 시작 ===== */
 

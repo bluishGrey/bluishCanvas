@@ -121,33 +121,43 @@
   </div>
 
   <div id="toolbar">
-    <span id="next-shape-label">사각형</span>
+    <span id="next-shape-label">사각형(1)</span>
+    <button type="button" id="canvas-search-btn" title="메모 검색 (Ctrl+F)">🔍</button>
     <span id="zoom-label">100%</span>
     <button id="reset-view" type="button">화면 초기화</button>
   </div>
 
-  <div id="hint">
-    빈 곳 <b>더블클릭</b> → 메모 생성 &nbsp;·&nbsp;
-    빈 곳 <b>우클릭</b> → 퀵메뉴(메모 추가 / 도형 전환) &nbsp;·&nbsp;
-    메모 <b>우클릭</b> → 화살표 연결 시작, 다른 메모 클릭으로 완성 (Esc/빈 곳 클릭으로 취소) &nbsp;·&nbsp;
-    <b>1/2/3</b> → 다음 생성 도형(사각형/원/마름모) &nbsp;·&nbsp;
-    빈 곳 <b>좌클릭 드래그</b> → 영역으로 여러 메모 선택 &nbsp;·&nbsp;
-    <b>휠클릭</b> 또는 <b>Ctrl+좌클릭 드래그</b> → 화면 이동 &nbsp;·&nbsp;
-    <b>스크롤</b> → 확대 / 축소 &nbsp;·&nbsp;
-    메모 <b>클릭/드래그</b> → 선택 / 이동 &nbsp;·&nbsp;
-    <b>Shift+클릭</b>(메모) → 선택 추가/제거, <b>Shift+드래그</b>(빈 곳) → 영역에 걸린 것만 토글 &nbsp;·&nbsp;
-    선택 후 모서리 <b>핸들 드래그</b> → 크기 조절(가로/세로 자유), <b>Shift</b>+드래그 → 비율 유지 &nbsp;·&nbsp;
-    메모 <b>더블클릭</b> → 글자 편집 &nbsp;·&nbsp;
-    화살표 <b>클릭</b> → 선택 &nbsp;·&nbsp;
-    <b>Delete</b> → 선택된 메모/화살표 삭제 &nbsp;·&nbsp;
-    <b>Ctrl+Z</b> → 실행취소 &nbsp;·&nbsp;
-    <b>Ctrl+Shift+Z</b> → 다시실행 &nbsp;·&nbsp;
-    <b>Ctrl+B</b> → 사이드바 접기/펼치기 &nbsp;·&nbsp;
-    사이드바: 페이지/폴더 <b>더블클릭</b> 또는 펜 아이콘 → 이름 변경, 페이지를 폴더 위로 <b>드래그</b> → 이동,
-    <b>Ctrl/Shift+클릭</b> → 다중 선택, 하단 <b>내보내기/가져오기</b> → 전체 백업 &nbsp;·&nbsp;
-    메모 선택 시 사이드바 <b>꾸미기</b> 패널 → 배경색/텍스트크기/정렬/테두리굵기 조절 &nbsp;·&nbsp;
-    사이드바 상단 검색창 → 페이지/폴더 검색 &nbsp;·&nbsp;
-    <b>Ctrl+F</b> → 현재 페이지 메모 검색(<b>Enter</b> 다음 결과, <b>Esc</b> 닫기)
+  <!-- 조작법 안내: 평소엔 숨겨져 있다가, 우측 하단 "?" 버튼을 누르면 팝업으로 뜬다 -->
+  <button type="button" id="help-btn" title="조작법 안내">?</button>
+
+  <div id="help-overlay" hidden>
+    <div id="help-popup">
+      <button type="button" id="help-close-btn" aria-label="닫기">×</button>
+      <div id="help-title">조작법 안내</div>
+      <div id="help-content">
+        빈 곳 <b>더블클릭</b> → 메모 생성 &nbsp;·&nbsp;
+        빈 곳 <b>우클릭</b> → 퀵메뉴(메모 추가 / 도형 전환) &nbsp;·&nbsp;
+        메모 <b>우클릭</b> → 화살표 연결 시작, 다른 메모 클릭으로 완성 (Esc/빈 곳 클릭으로 취소) &nbsp;·&nbsp;
+        <b>1/2/3</b> → 다음 생성 도형(사각형/원/마름모) &nbsp;·&nbsp;
+        빈 곳 <b>좌클릭 드래그</b> → 영역으로 여러 메모 선택 &nbsp;·&nbsp;
+        <b>휠클릭</b> 또는 <b>Ctrl+좌클릭 드래그</b> → 화면 이동 &nbsp;·&nbsp;
+        <b>스크롤</b> → 확대 / 축소 &nbsp;·&nbsp;
+        메모 <b>클릭/드래그</b> → 선택 / 이동 &nbsp;·&nbsp;
+        <b>Shift+클릭</b>(메모) → 선택 추가/제거, <b>Shift+드래그</b>(빈 곳) → 영역에 걸린 것만 토글 &nbsp;·&nbsp;
+        선택 후 모서리 <b>핸들 드래그</b> → 크기 조절(가로/세로 자유), <b>Shift</b>+드래그 → 비율 유지 &nbsp;·&nbsp;
+        메모 <b>더블클릭</b> → 글자 편집 &nbsp;·&nbsp;
+        화살표 <b>클릭</b> → 선택 &nbsp;·&nbsp;
+        <b>Delete</b> → 선택된 메모/화살표 삭제 &nbsp;·&nbsp;
+        <b>Ctrl+Z</b> → 실행취소 &nbsp;·&nbsp;
+        <b>Ctrl+Shift+Z</b> → 다시실행 &nbsp;·&nbsp;
+        <b>Ctrl+B</b> → 사이드바 접기/펼치기 &nbsp;·&nbsp;
+        사이드바: 페이지/폴더 <b>더블클릭</b> 또는 펜 아이콘 → 이름 변경, 페이지를 폴더 위로 <b>드래그</b> → 이동,
+        <b>Ctrl/Shift+클릭</b> → 다중 선택, 하단 <b>내보내기/가져오기</b> → 전체 백업 &nbsp;·&nbsp;
+        메모 선택 시 사이드바 <b>꾸미기</b> 패널 → 배경색/텍스트크기/정렬/테두리굵기 조절 &nbsp;·&nbsp;
+        사이드바 상단 검색창 → 페이지/폴더 검색 &nbsp;·&nbsp;
+        <b>Ctrl+F</b> 또는 우측 상단 <b>🔍</b> → 현재 페이지 메모 검색(<b>Enter</b> 다음 결과, <b>Esc</b> 닫기)
+      </div>
+    </div>
   </div>
 
   <!-- 빈 곳 우클릭 시 뜨는 퀵메뉴: 메모 추가 + 다음 생성 도형 전환 -->

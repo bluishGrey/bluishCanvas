@@ -420,31 +420,108 @@ body {
   color: var(--accent);
 }
 
-#hint {
-  position: fixed;
-  bottom: 14px;
-  /* 화면 전체가 아니라, 사이드바를 뺀 캔버스 영역 안에서 가운데 오도록 보정한다. */
-  left: calc(var(--sidebar-w) + (100% - var(--sidebar-w)) / 2);
-  transform: translateX(-50%);
-  padding: 7px 14px;
-  background: rgba(255, 255, 255, 0.9);
+#canvas-search-btn {
   border: 1px solid var(--note-border);
-  border-radius: 999px;
-  font-size: 12.5px;
-  color: #55617a;
-  white-space: nowrap;
-  backdrop-filter: blur(4px);
+  background: #fff;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font-size: 13px;
+  line-height: 1.4;
+  cursor: pointer;
 }
 
-#hint b {
+#canvas-search-btn:hover {
+  border-color: var(--accent);
+}
+
+/* ===== 조작법 안내: "?" 버튼 + 팝업 ===== */
+#help-btn {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  width: 34px;
+  height: 34px;
+  border-radius: 50%;
+  border: 1px solid var(--note-border);
+  background: #fff;
+  color: #55617a;
+  font-size: 15px;
+  font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 4px 14px rgba(31, 39, 51, 0.15);
+  z-index: 15;
+}
+
+#help-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+#help-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(31, 39, 51, 0.25);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 30;
+}
+
+#help-overlay[hidden] {
+  display: none;
+}
+
+#help-popup {
+  position: relative;
+  width: calc(100% - 48px);
+  max-width: 640px;
+  max-height: 80vh;
+  overflow-y: auto;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(31, 39, 51, 0.3);
+  padding: 22px 24px;
+}
+
+#help-title {
+  font-weight: 700;
+  font-size: 15px;
   color: var(--text);
+  margin-bottom: 10px;
+}
+
+#help-content {
+  font-size: 13px;
+  line-height: 1.9;
+  color: #55617a;
+}
+
+#help-content b {
+  color: var(--text);
+}
+
+#help-close-btn {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  border: none;
+  background: none;
+  color: #9aa7bd;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px;
+}
+
+#help-close-btn:hover {
+  color: var(--accent);
 }
 
 /* ===== 캔버스(현재 페이지) 메모 검색 (Ctrl+F) ===== */
 #canvas-search {
   position: fixed;
   top: 14px;
-  /* #hint 와 같은 방식: 화면 전체가 아니라 사이드바를 뺀 캔버스 영역 안에서 가운데. */
+  /* 화면 전체가 아니라, 사이드바를 뺀 캔버스 영역 안에서 가운데 오도록 보정한다. */
   left: calc(var(--sidebar-w) + (100% - var(--sidebar-w)) / 2);
   transform: translateX(-50%);
   display: flex;
