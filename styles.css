@@ -157,23 +157,24 @@ body {
   display: none;
 }
 
-/* 화살표 라벨: 화살표 중간에 뜨는 짧은 텍스트 + 흰 배경 */
+/* 화살표 라벨: 메모 카드(테두리+흰 배경+그림자)와는 다르게, 테두리/그림자 없이
+   옅은 배경색만 있는 알약(캡슐) 모양의 "보조 정보" 느낌으로 만든다.
+   모서리 반지름(rx)은 매번 배경 높이의 절반으로 다시 계산해서(updateArrowLabelPosition)
+   글자 크기가 달라져도 항상 완전한 반원 캡슐 모양이 되게 한다. */
 .arrow-label-bg {
-  fill: #fff;
-  stroke: var(--note-border);
-  stroke-width: 1;
+  fill: rgba(148, 163, 184, 0.3);
   pointer-events: none;
 }
 
 .arrow-label-text {
-  font-size: 12px;
-  fill: #33415c;
+  font-size: 12px; /* 메모 텍스트(14px)보다 살짝 작게 */
+  fill: #55617a;
   pointer-events: none;
   user-select: none;
 }
 
 .arrow.selected .arrow-label-bg {
-  stroke: var(--accent);
+  fill: rgba(59, 111, 212, 0.18);
 }
 
 .arrow.selected .arrow-label-text {

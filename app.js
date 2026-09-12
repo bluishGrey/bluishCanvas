@@ -1272,14 +1272,19 @@ function updateArrowLabelPosition(arrow, g, p1, p2) {
   text.removeAttribute("hidden");
   bg.removeAttribute("hidden");
 
-  // 배경 사각형은 실제 렌더된 글자 크기(getBBox)에 여백을 더해서 맞춘다.
+  // 배경은 실제 렌더된 글자 크기(getBBox)에 여백을 더해서 맞춘다.
+  // rx 를 매번 높이의 절반으로 다시 계산해서, 글자 길이가 달라져도
+  // 항상 양 끝이 완전한 반원인 알약(캡슐) 모양이 되게 한다.
   const box = text.getBBox();
-  const padX = 4;
-  const padY = 2;
+  const padX = 7;
+  const padY = 3;
+  const bgWidth = box.width + padX * 2;
+  const bgHeight = box.height + padY * 2;
   bg.setAttribute("x", box.x - padX);
   bg.setAttribute("y", box.y - padY);
-  bg.setAttribute("width", box.width + padX * 2);
-  bg.setAttribute("height", box.height + padY * 2);
+  bg.setAttribute("width", bgWidth);
+  bg.setAttribute("height", bgHeight);
+  bg.setAttribute("rx", bgHeight / 2);
 }
 
 // 화살표의 현재 중간 지점(월드 좌표)을 실제 렌더된 선 좌표에서 읽어온다.
@@ -1311,7 +1316,6 @@ function renderArrow(arrow) {
   // (updateArrowLabelPosition 이 label 유무에 따라 보이기/감추기를 매번 처리).
   const labelBg = document.createElementNS(SVG_NS, "rect");
   labelBg.setAttribute("class", "arrow-label-bg");
-  labelBg.setAttribute("rx", "3");
   labelBg.setAttribute("hidden", "");
 
   const labelText = document.createElementNS(SVG_NS, "text");
