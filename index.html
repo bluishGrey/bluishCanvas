@@ -13,6 +13,10 @@
     <div id="world"></div>
     <!-- 빈 곳 좌클릭 드래그 시 나타나는 사각형 다중 선택 영역 (화면 좌표 기준) -->
     <div id="selection-box" hidden></div>
+    <!-- 선택된 메모(들)의 실제 경계 상자를 그대로 보여주는 점선 테두리 (화면 좌표 기준).
+         원/마름모는 도형 모양 때문에 경계 상자 모서리가 비어 보이는데, 이 테두리가
+         핸들/삭제버튼이 어떤 사각형을 기준으로 위치하는지 눈에 보이게 해준다. -->
+    <div id="selection-outline" hidden></div>
     <!-- 메모 선택 시 모서리에 나타나는 크기조절 핸들 (화면 좌표 기준) -->
     <div id="resize-handles" hidden>
       <div class="resize-handle" data-corner="nw"></div>

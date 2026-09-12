@@ -47,6 +47,14 @@ body {
   pointer-events: none;
 }
 
+/* ===== 선택된 메모의 실제 경계 상자 표시 (화면 좌표, transform 영향 안 받음) ===== */
+#selection-outline {
+  position: absolute;
+  border: 1px dashed rgba(59, 111, 212, 0.55);
+  border-radius: 4px;
+  pointer-events: none;
+}
+
 /* ===== 크기조절 핸들 (화면 좌표, transform 영향 안 받음) ===== */
 #resize-handles {
   position: absolute;
@@ -163,8 +171,16 @@ body {
 }
 
 .note-text {
-  position: relative; /* .note-shape 보다 나중에 그려지도록(위로 오도록) 포지셔닝 컨텍스트를 갖는다 */
-  height: 100%;
+  /* position:absolute + inset 로 크기를 잡는다 (position:relative 아닌 이유는 아래 참고).
+     상하좌우 inset 을 도형별로 다르게 줘서, 원/마름모에서 텍스트 영역이 도형보다
+     안쪽에 오도록(모서리로 삐져나가지 않도록) 만든다. */
+  position: absolute;
+  inset: 0;
+  /* 가로/세로 모두 가운데 정렬. 여러 줄일 때도 각 줄이 가운데로 오도록 text-align 도 같이 준다. */
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
   overflow-y: auto;
   overflow-x: hidden;
   font-size: 14px;
@@ -173,6 +189,18 @@ body {
   white-space: pre-wrap;
   word-break: break-word;
   user-select: text;
+}
+
+/* 원: 타원에 내접하는 최대 사각형 비율(1/√2 ≈ 70.7%)만큼만 텍스트 영역을 준다 —
+   그 안에 있으면 어떤 텍스트 배치든 곡선 밖으로 나가지 않는다. */
+.note[data-shape="ellipse"] .note-text {
+  inset: 15%;
+}
+
+/* 마름모: 마름모에 내접하는 최대 사각형은 정확히 가로/세로의 절반이다.
+   (수학적으로 그 이상 크게 잡으면 모서리 쪽에서 반드시 삐져나온다) */
+.note[data-shape="diamond"] .note-text {
+  inset: 25%;
 }
 
 .note-text:focus {

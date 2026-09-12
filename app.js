@@ -12,6 +12,7 @@
 const canvas = document.getElementById("canvas");
 const world = document.getElementById("world");
 const selectionBoxEl = document.getElementById("selection-box");
+const selectionOutlineEl = document.getElementById("selection-outline");
 const resizeHandlesEl = document.getElementById("resize-handles");
 const quickMenuEl = document.getElementById("quick-menu");
 const nextShapeLabelEl = document.getElementById("next-shape-label");
@@ -203,10 +204,16 @@ function notesInScreenRect(rx1, ry1, rx2, ry2) {
 
 /* ===== 크기조절 핸들 ===== */
 
-// 선택된 메모(들)를 감싸는 사각형의 네 모서리에 핸들을 배치한다. (화면 좌표 기준)
+// 선택된 메모(들)를 감싸는 사각형(실제 경계 상자)의 네 모서리에 핸들을 배치하고,
+// 그 사각형 자체도 점선으로 그려서 보여준다. (화면 좌표 기준)
+//
+// 원/마름모는 도형 모양 때문에 이 사각형의 모서리 쪽이 시각적으로 "비어" 보이는데,
+// 핸들과 삭제 버튼은 (도형의 겉모습이 아니라) 이 사각형 기준으로 정확히 위치한다 —
+// 점선 테두리를 같이 그려주는 이유가 바로 그걸 눈으로 확인할 수 있게 하기 위해서다.
 function updateHandles() {
   if (selectedIds.size === 0) {
     resizeHandlesEl.hidden = true;
+    selectionOutlineEl.hidden = true;
     return;
   }
 
@@ -228,14 +235,26 @@ function updateHandles() {
 
   if (!isFinite(left)) {
     resizeHandlesEl.hidden = true;
+    selectionOutlineEl.hidden = true;
     return;
   }
 
+  const l = left - canvasRect.left;
+  const t = top - canvasRect.top;
+  const r = right - canvasRect.left;
+  const b = bottom - canvasRect.top;
+
+  selectionOutlineEl.style.left = `${l}px`;
+  selectionOutlineEl.style.top = `${t}px`;
+  selectionOutlineEl.style.width = `${r - l}px`;
+  selectionOutlineEl.style.height = `${b - t}px`;
+  selectionOutlineEl.hidden = false;
+
   const corners = {
-    nw: { x: left - canvasRect.left, y: top - canvasRect.top },
-    ne: { x: right - canvasRect.left, y: top - canvasRect.top },
-    sw: { x: left - canvasRect.left, y: bottom - canvasRect.top },
-    se: { x: right - canvasRect.left, y: bottom - canvasRect.top },
+    nw: { x: l, y: t },
+    ne: { x: r, y: t },
+    sw: { x: l, y: b },
+    se: { x: r, y: b },
   };
 
   Object.entries(corners).forEach(([corner, pos]) => {
