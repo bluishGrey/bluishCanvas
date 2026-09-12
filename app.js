@@ -76,6 +76,8 @@ let pagesData = {};
 let pageHistories = {};
 let activePageId = null;
 let nextTreeId = 1;
+let selectedTreeIds = new Set(); // 사이드바에서 다중 선택된 페이지/폴더 id 들 (Ctrl/Shift+클릭)
+let treeSelectionAnchorId = null; // Shift+클릭 범위 선택의 기준점
 
 function createEmptyPageData() {
   return { view: { x: 0, y: 0, scale: 1 }, notes: [], arrows: [], nextId: 1, nextArrowId: 1 };
@@ -435,24 +437,187 @@ function requestDeleteNode(node) {
   deleteNodeAndPages(node.id, pageIds);
 }
 
-// 드래그 중인 페이지를 이 폴더 안으로 옮긴다. (드래그로 옮기는 건 페이지만 가능 —
-// 폴더끼리 옮기는 건 이번 범위 밖)
-function movePageIntoFolder(pageId, folderId) {
-  const pageInfo = findNodeInfo(tree, pageId);
-  if (!pageInfo || pageInfo.node.type !== "page") return;
-  const folderInfo = findNodeInfo(tree, folderId);
-  if (!folderInfo || folderInfo.node.type !== "folder") return;
+/* ===== 사이드바 다중 선택 (Ctrl/Shift+클릭) ===== */
 
-  const folder = folderInfo.node;
-  if (!folder.children) folder.children = [];
-  if (pageInfo.array === folder.children) return; // 이미 이 폴더 바로 안에 있음
+function setTreeSelection(idList) {
+  selectedTreeIds = new Set(idList);
+  renderSidebar(); // 트리 크기가 작아서 전체를 다시 그려도 부담 없다.
+}
 
-  pageInfo.array.splice(pageInfo.index, 1);
-  folder.children.push(pageInfo.node);
-  folder.expanded = true;
+function selectOnlyTree(id) {
+  setTreeSelection(id == null ? [] : [id]);
+}
+
+function deselectAllTree() {
+  setTreeSelection([]);
+}
+
+function toggleTreeSelection(id) {
+  const next = new Set(selectedTreeIds);
+  if (next.has(id)) {
+    next.delete(id);
+  } else {
+    next.add(id);
+  }
+  setTreeSelection(Array.from(next));
+}
+
+// 화면에 실제로 보이는(펼쳐진) 순서대로 id 를 나열한다 — Shift+클릭 범위 선택에 쓴다.
+function flattenVisibleTreeIds(nodes = tree) {
+  let ids = [];
+  nodes.forEach((n) => {
+    ids.push(n.id);
+    if (n.type === "folder" && n.expanded) {
+      ids = ids.concat(flattenVisibleTreeIds(n.children || []));
+    }
+  });
+  return ids;
+}
+
+// 접혀 있는 폴더 안까지 포함해서 전부 순서대로 나열한다 — 다중 드래그 시 원래 순서를
+// 그대로 유지하기 위한 정렬 기준으로 쓴다.
+function flattenAllTreeIds(nodes = tree) {
+  let ids = [];
+  nodes.forEach((n) => {
+    ids.push(n.id);
+    if (n.type === "folder") {
+      ids = ids.concat(flattenAllTreeIds(n.children || []));
+    }
+  });
+  return ids;
+}
+
+function rangeSelectTree(targetId) {
+  const flatIds = flattenVisibleTreeIds();
+  const anchorIdx = flatIds.indexOf(treeSelectionAnchorId);
+  const targetIdx = flatIds.indexOf(targetId);
+  if (anchorIdx === -1 || targetIdx === -1) {
+    selectOnlyTree(targetId);
+    return;
+  }
+  const from = Math.min(anchorIdx, targetIdx);
+  const to = Math.max(anchorIdx, targetIdx);
+  setTreeSelection(flatIds.slice(from, to + 1));
+}
+
+/* ===== 사이드바 드래그 앤 드롭 (페이지/폴더 이동) ===== */
+
+function isNodeOrDescendant(node, id) {
+  if (node.id === id) return true;
+  if (node.type !== "folder") return false;
+  return (node.children || []).some((c) => isNodeOrDescendant(c, id));
+}
+
+// 각 id 가 조상 없이 "최상위로 드래그된" 항목인지 걸러낸다 — 폴더와 그 안의 항목이
+// 동시에 선택돼 있으면, 안쪽 항목은 폴더를 옮길 때 자연히 같이 따라가므로 제외한다.
+function filterTopLevelDraggedIds(ids) {
+  const ancestorsOf = new Map();
+  (function walk(nodes, ancestors) {
+    nodes.forEach((n) => {
+      ancestorsOf.set(n.id, ancestors);
+      if (n.type === "folder") walk(n.children || [], ancestors.concat(n.id));
+    });
+  })(tree, []);
+
+  const idSet = new Set(ids);
+  return ids.filter((id) => {
+    const ancestors = ancestorsOf.get(id) || [];
+    return !ancestors.some((a) => idSet.has(a));
+  });
+}
+
+let currentDropZone = null; // { targetId, zone } — zone: "into" | "before" | "after" | "root-end"
+
+function clearDropIndicators() {
+  pageTreeEl.querySelectorAll(".drop-target, .drop-before, .drop-after").forEach((el) => {
+    el.classList.remove("drop-target", "drop-before", "drop-after");
+  });
+  pageTreeEl.classList.remove("drop-target-root");
+}
+
+// draggedIds(최상위 항목들)를 targetId 기준 zone 위치로 옮긴다.
+// targetId 가 null 이면(zone="root-end") 맨 위 계층의 끝에 놓는다.
+function moveTreeNodes(draggedIds, targetId, zone) {
+  if (targetId) {
+    // 대상이 드래그된 항목 자신이거나, 드래그된 폴더의 자손이면 무시한다
+    // (자기 자신 위/안으로는 옮길 수 없다).
+    const invalid = draggedIds.some((id) => {
+      const info = findNodeInfo(tree, id);
+      return info && isNodeOrDescendant(info.node, targetId);
+    });
+    if (invalid) return;
+  }
+
+  const topLevelIds = filterTopLevelDraggedIds(draggedIds);
+  if (topLevelIds.length === 0) return;
+
+  // 원래 트리 순서를 유지한 채로 옮긴다 (여러 개를 한번에 드래그했을 때 순서가 섞이지 않게).
+  const orderedIds = flattenAllTreeIds().filter((id) => topLevelIds.includes(id));
+  const nodesToMove = orderedIds
+    .map((id) => findNodeInfo(tree, id))
+    .filter(Boolean)
+    .map((info) => info.node);
+  if (nodesToMove.length === 0) return;
+
+  // 하나씩 제자리에서 뽑아낸다 — 매번 새로 위치를 찾아야, 앞서 뽑아낸 것 때문에
+  // 같은 배열 안의 인덱스가 밀린 것도 정확히 반영된다.
+  nodesToMove.forEach((node) => {
+    const info = findNodeInfo(tree, node.id);
+    if (info) info.array.splice(info.index, 1);
+  });
+
+  let targetArray;
+  let targetIndex;
+
+  if (zone === "root-end" || targetId === null) {
+    targetArray = tree;
+    targetIndex = tree.length;
+  } else if (zone === "into") {
+    const folderInfo = findNodeInfo(tree, targetId);
+    if (folderInfo && folderInfo.node.type === "folder") {
+      if (!folderInfo.node.children) folderInfo.node.children = [];
+      targetArray = folderInfo.node.children;
+      targetIndex = targetArray.length;
+      folderInfo.node.expanded = true;
+    } else {
+      targetArray = tree;
+      targetIndex = tree.length;
+    }
+  } else {
+    // before / after: 대상과 같은 배열의, 그 바로 앞/뒤 자리
+    const targetInfo = findNodeInfo(tree, targetId);
+    if (targetInfo) {
+      targetArray = targetInfo.array;
+      targetIndex = targetInfo.index + (zone === "after" ? 1 : 0);
+    } else {
+      targetArray = tree;
+      targetIndex = tree.length;
+    }
+  }
+
+  targetArray.splice(targetIndex, 0, ...nodesToMove);
 
   renderSidebar();
   save();
+}
+
+function handleTreeDrop(e, targetId, zone) {
+  e.preventDefault();
+  e.stopPropagation();
+  clearDropIndicators();
+  currentDropZone = null;
+
+  const raw = e.dataTransfer.getData("text/plain");
+  if (!raw) return;
+  let draggedIds;
+  try {
+    draggedIds = JSON.parse(raw);
+  } catch (err) {
+    return;
+  }
+  if (!Array.isArray(draggedIds) || draggedIds.length === 0) return;
+
+  moveTreeNodes(draggedIds, targetId, zone);
 }
 
 function renderTreeNodes(nodes, container, depth) {
@@ -461,6 +626,8 @@ function renderTreeNodes(nodes, container, depth) {
     row.className = "tree-row";
     row.style.paddingLeft = `${depth * 16 + 6}px`;
     row.dataset.id = node.id;
+    row.draggable = true;
+    if (selectedTreeIds.has(node.id)) row.classList.add("tree-selected");
 
     if (node.type === "folder") {
       row.classList.add("tree-folder");
@@ -474,22 +641,6 @@ function renderTreeNodes(nodes, container, depth) {
         save();
       });
       row.appendChild(caret);
-
-      // 폴더는 드래그된 페이지를 받을 수 있는 대상이다.
-      row.addEventListener("dragover", (e) => {
-        e.preventDefault(); // 이걸 해줘야 drop 이벤트가 실제로 발생한다.
-        e.dataTransfer.dropEffect = "move";
-        row.classList.add("drop-target");
-      });
-      row.addEventListener("dragleave", () => {
-        row.classList.remove("drop-target");
-      });
-      row.addEventListener("drop", (e) => {
-        e.preventDefault();
-        row.classList.remove("drop-target");
-        const draggedId = e.dataTransfer.getData("text/plain");
-        if (draggedId) movePageIntoFolder(draggedId, node.id);
-      });
     } else {
       row.classList.add("tree-page");
       if (node.id === activePageId) row.classList.add("active");
@@ -497,18 +648,64 @@ function renderTreeNodes(nodes, container, depth) {
       icon.className = "tree-page-icon";
       icon.textContent = "▭";
       row.appendChild(icon);
-
-      // 페이지는 드래그해서 폴더 위에 놓을 수 있는 대상이다.
-      row.draggable = true;
-      row.addEventListener("dragstart", (e) => {
-        e.dataTransfer.setData("text/plain", node.id);
-        e.dataTransfer.effectAllowed = "move";
-        row.classList.add("dragging-row");
-      });
-      row.addEventListener("dragend", () => {
-        row.classList.remove("dragging-row");
-      });
     }
+
+    // --- 드래그 시작: 이 항목이 이미 선택돼 있었다면 선택된 것들을 다같이, 아니면 이것만 ---
+    row.addEventListener("dragstart", (e) => {
+      e.stopPropagation();
+      const draggedIds = selectedTreeIds.has(node.id) ? Array.from(selectedTreeIds) : [node.id];
+      e.dataTransfer.setData("text/plain", JSON.stringify(draggedIds));
+      e.dataTransfer.effectAllowed = "move";
+      draggedIds.forEach((id) => {
+        const el = pageTreeEl.querySelector(`.tree-row[data-id="${id}"]`);
+        if (el) el.classList.add("dragging-row");
+      });
+      // 드래그 시작 시점에 다시 그리면 브라우저의 드래그 캡처가 깨질 수 있어서, 선택
+      // 갱신은 한 틱 미룬다 (드래그 자체엔 영향 없음 — 이미 위에서 draggedIds 를 구해뒀다).
+      if (!selectedTreeIds.has(node.id)) {
+        setTimeout(() => {
+          selectedTreeIds = new Set([node.id]);
+          treeSelectionAnchorId = node.id;
+          renderSidebar();
+        }, 0);
+      }
+    });
+    row.addEventListener("dragend", () => {
+      pageTreeEl.querySelectorAll(".dragging-row").forEach((el) => el.classList.remove("dragging-row"));
+      clearDropIndicators();
+    });
+
+    // --- 드래그 오버: 커서 높이에 따라 "폴더 안으로" / "위/아래 사이로" 를 구분한다 ---
+    row.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      e.dataTransfer.dropEffect = "move";
+
+      const rect = row.getBoundingClientRect();
+      const ratio = (e.clientY - rect.top) / rect.height;
+
+      let zone;
+      if (node.type === "folder") {
+        if (ratio < 0.25) zone = "before";
+        else if (ratio > 0.75) zone = "after";
+        else zone = "into";
+      } else {
+        zone = ratio < 0.5 ? "before" : "after";
+      }
+
+      clearDropIndicators();
+      if (zone === "into") row.classList.add("drop-target");
+      else if (zone === "before") row.classList.add("drop-before");
+      else row.classList.add("drop-after");
+      currentDropZone = { targetId: node.id, zone };
+    });
+    row.addEventListener("dragleave", (e) => {
+      e.stopPropagation();
+    });
+    row.addEventListener("drop", (e) => {
+      const zone = currentDropZone && currentDropZone.targetId === node.id ? currentDropZone.zone : "after";
+      handleTreeDrop(e, node.id, zone);
+    });
 
     const nameEl = document.createElement("span");
     nameEl.className = "tree-name";
@@ -549,16 +746,31 @@ function renderTreeNodes(nodes, container, depth) {
     );
     row.appendChild(actions);
 
-    if (node.type === "page") {
-      row.addEventListener("click", () => switchToPage(node.id));
-    } else {
-      // 폴더는 이름 부분을 클릭해도(더블클릭이 아니면) 펼치기/접기가 되게 한다.
-      row.addEventListener("click", () => {
+    // --- 클릭: Shift=범위선택, Ctrl/Cmd=토글선택, 그냥 클릭=선택+원래 동작(전환/펼치기) ---
+    row.addEventListener("click", (e) => {
+      if (e.shiftKey) {
+        rangeSelectTree(node.id);
+        return;
+      }
+      if (e.ctrlKey || e.metaKey) {
+        toggleTreeSelection(node.id);
+        treeSelectionAnchorId = node.id;
+        return;
+      }
+
+      selectedTreeIds = new Set([node.id]);
+      treeSelectionAnchorId = node.id;
+
+      if (node.type === "page") {
+        switchToPage(node.id); // 실제로 페이지가 바뀌면 내부에서 renderSidebar() 까지 처리된다
+        renderSidebar(); // 이미 열려 있던 페이지를 클릭한 경우엔 switchToPage 가 조기 종료하므로,
+        // 선택 강조(다른 항목의 다중 선택 해제 등)가 반영되도록 한 번 더 보장한다.
+      } else {
         node.expanded = !node.expanded;
         renderSidebar();
         save();
-      });
-    }
+      }
+    });
 
     container.appendChild(row);
 
@@ -572,6 +784,28 @@ function renderSidebar() {
   pageTreeEl.innerHTML = "";
   renderTreeNodes(tree, pageTreeEl, 0);
 }
+
+// 트리 항목이 아닌, 사이드바의 빈 공간 위로 드래그하면 맨 위 계층의 끝으로 옮긴다
+// (폴더 밖으로 빼내는 용도). 각 행의 dragover/drop 은 stopPropagation 하므로, 여기는
+// 정말 빈 공간 위에 있을 때만 반응한다.
+pageTreeEl.addEventListener("dragover", (e) => {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = "move";
+  clearDropIndicators();
+  pageTreeEl.classList.add("drop-target-root");
+  currentDropZone = { targetId: null, zone: "root-end" };
+});
+pageTreeEl.addEventListener("dragleave", (e) => {
+  if (e.target === pageTreeEl) pageTreeEl.classList.remove("drop-target-root");
+});
+pageTreeEl.addEventListener("drop", (e) => {
+  handleTreeDrop(e, null, "root-end");
+});
+
+// 사이드바의 빈 공간을 클릭하면 다중 선택을 해제한다.
+pageTreeEl.addEventListener("click", (e) => {
+  if (e.target === pageTreeEl) deselectAllTree();
+});
 
 addPageBtn.addEventListener("click", () => createPage(null));
 addFolderBtn.addEventListener("click", () => createFolder(null));

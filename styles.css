@@ -472,6 +472,7 @@ body {
 }
 
 .tree-row {
+  position: relative; /* drop-before/after 선(::before/::after)의 기준점 */
   display: flex;
   align-items: center;
   gap: 4px;
@@ -489,6 +490,13 @@ body {
   background: rgba(59, 111, 212, 0.12);
   color: var(--accent);
   font-weight: 600;
+}
+
+/* Ctrl/Shift+클릭으로 다중 선택된 항목 (지금 열려 있는 페이지 강조와는 별개) */
+.tree-row.tree-selected {
+  background: rgba(59, 111, 212, 0.12);
+  outline: 1px solid rgba(59, 111, 212, 0.45);
+  outline-offset: -1px;
 }
 
 .tree-caret {
@@ -610,4 +618,32 @@ body.sidebar-collapsed #sidebar-open-btn {
   background: rgba(59, 111, 212, 0.18);
   outline: 2px dashed var(--accent);
   outline-offset: -2px;
+}
+
+/* 항목 사이(위/아래)에 놓일 위치를 보여주는 얇은 선 */
+.tree-row.drop-before::before,
+.tree-row.drop-after::after {
+  content: "";
+  position: absolute;
+  left: 4px;
+  right: 4px;
+  height: 2px;
+  border-radius: 1px;
+  background: var(--accent);
+  pointer-events: none;
+}
+
+.tree-row.drop-before::before {
+  top: -2px;
+}
+
+.tree-row.drop-after::after {
+  bottom: -2px;
+}
+
+/* 사이드바의 빈 공간(맨 위 계층 끝)에 드래그 중일 때 */
+#page-tree.drop-target-root {
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+  border-radius: 6px;
 }
