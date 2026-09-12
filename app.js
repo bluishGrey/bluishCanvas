@@ -397,7 +397,8 @@ function createPage(parentFolder) {
   const targetArray = parentFolder ? (parentFolder.children || (parentFolder.children = [])) : tree;
   targetArray.push(node);
   if (parentFolder) parentFolder.expanded = true;
-  switchToPage(id); // 안에서 renderSidebar()/save() 까지 처리된다
+  switchToPage(id); // 안에서 save() 까지 처리된다 (트리 구조는 안 바뀌는 일반 전환이라 렌더는 없음)
+  renderSidebar(); // 방금 추가한 새 페이지 행 자체는 switchToPage 가 그려주지 않으므로 따로 호출
 }
 
 function createFolder(parentFolder) {
