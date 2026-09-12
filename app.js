@@ -20,9 +20,14 @@ const zoomLabel = document.getElementById("zoom-label");
 const resetBtn = document.getElementById("reset-view");
 const arrowsLayerEl = document.getElementById("arrows-layer");
 const arrowDraftEl = document.getElementById("arrow-draft");
+const sidebarEl = document.getElementById("sidebar");
+const pageTreeEl = document.getElementById("page-tree");
+const addPageBtn = document.getElementById("add-page-btn");
+const addFolderBtn = document.getElementById("add-folder-btn");
 const SVG_NS = "http://www.w3.org/2000/svg";
 
-const STORAGE_KEY = "bluishCanvas.v1";
+const STORAGE_KEY = "bluishCanvas.v2";
+const LEGACY_STORAGE_KEY = "bluishCanvas.v1"; // 페이지/폴더 기능 이전의 단일 캔버스 저장 형식
 const MIN_SCALE = 0.2;
 const MAX_SCALE = 4;
 const MAX_HISTORY = 50;
@@ -49,13 +54,115 @@ let history = [];
 let historyIndex = -1;
 let isRestoringHistory = false;
 
+/* ===== 페이지 / 폴더 (여러 개의 독립된 캔버스) =====
+ *
+ * 위의 view/notes/arrows/nextId/nextArrowId/selectedIds/history 등은 전부
+ * "현재 열려 있는 페이지 하나"의 실시간 작업 상태다. 페이지를 여러 개 두기 위해
+ * 그 상태 전체를 통째로 별도 페이지로 바꿔치기하는 방식을 쓴다(loadPageIntoGlobals) —
+ * 기존의 메모/화살표/선택/히스토리 로직은 "지금 이 순간 열려 있는 페이지"만 신경 쓰면
+ * 되고, 페이지 전환/저장 쪽만 그 상태를 통째로 읽고 쓰면 되게 만들기 위해서다.
+ *
+ * tree: 폴더/페이지 트리. 각 항목은
+ *   폴더 { type:"folder", id, name, expanded, children:[...] }
+ *   페이지 { type:"page", id, name }
+ * pagesData: 페이지 id -> { view, notes, arrows, nextId, nextArrowId } (비활성 페이지들의 내용)
+ * pageHistories: 페이지 id -> { history, historyIndex } (세션 동안만 메모리에 유지, 저장 안 함 —
+ *   기존에도 실행취소 기록은 새로고침하면 초기화됐던 것과 같은 원칙)
+ */
+let tree = [];
+let pagesData = {};
+let pageHistories = {};
+let activePageId = null;
+let nextTreeId = 1;
+
+function createEmptyPageData() {
+  return { view: { x: 0, y: 0, scale: 1 }, notes: [], arrows: [], nextId: 1, nextArrowId: 1 };
+}
+
+function backfillNoteDefaults(noteList) {
+  noteList.forEach((n) => {
+    if (typeof n.w !== "number") n.w = DEFAULT_NOTE_W;
+    if (typeof n.h !== "number") n.h = DEFAULT_NOTE_H;
+    if (!n.shape) n.shape = DEFAULT_SHAPE;
+  });
+}
+
+// 페이지/폴더 기능이 생기기 전(v1)의 저장 데이터가 있으면, 페이지 하나로 옮겨온다.
+function migrateLegacyData() {
+  let raw;
+  try {
+    raw = localStorage.getItem(LEGACY_STORAGE_KEY);
+  } catch (e) {
+    return null;
+  }
+  if (!raw) return null;
+  try {
+    const data = JSON.parse(raw);
+    const notesList = Array.isArray(data.notes) ? data.notes : [];
+    backfillNoteDefaults(notesList);
+    const pageData = {
+      view: data.view || { x: 0, y: 0, scale: 1 },
+      notes: notesList,
+      arrows: Array.isArray(data.arrows) ? data.arrows : [],
+      nextId: data.nextId || notesList.length + 1,
+      nextArrowId: data.nextArrowId || 1,
+    };
+    const pageId = `p${nextTreeId++}`;
+    return { pageId, pageData };
+  } catch (e) {
+    return null;
+  }
+}
+
+function findNodeInfo(nodes, id) {
+  for (let i = 0; i < nodes.length; i++) {
+    if (nodes[i].id === id) return { node: nodes[i], array: nodes, index: i };
+    if (nodes[i].type === "folder") {
+      const found = findNodeInfo(nodes[i].children || [], id);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function findFirstPageId(nodes) {
+  for (const n of nodes) {
+    if (n.type === "page") return n.id;
+    if (n.type === "folder") {
+      const found = findFirstPageId(n.children || []);
+      if (found) return found;
+    }
+  }
+  return null;
+}
+
+function collectPageIds(node) {
+  if (node.type === "page") return [node.id];
+  let ids = [];
+  (node.children || []).forEach((child) => {
+    ids = ids.concat(collectPageIds(child));
+  });
+  return ids;
+}
+
 /* ===== 저장 / 불러오기 (localStorage) ===== */
+
+function serializeCurrentPage() {
+  return {
+    view: { ...view },
+    notes: cloneNotes(),
+    arrows: cloneArrows(),
+    nextId,
+    nextArrowId,
+  };
+}
 
 function save() {
   try {
+    if (activePageId) pagesData[activePageId] = serializeCurrentPage();
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ view, notes, nextId, arrows, nextArrowId })
+      JSON.stringify({ tree, pages: pagesData, activePageId, nextTreeId })
     );
   } catch (e) {
     console.warn("저장 실패:", e);
@@ -65,22 +172,36 @@ function save() {
 function load() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
-    const data = JSON.parse(raw);
-    if (data.view) Object.assign(view, data.view);
-    notes = Array.isArray(data.notes) ? data.notes : [];
-    // 크기 조절/도형 기능이 생기기 전에 저장된 메모는 w/h/shape 가 없으므로 기본값을 채워준다.
-    notes.forEach((n) => {
-      if (typeof n.w !== "number") n.w = DEFAULT_NOTE_W;
-      if (typeof n.h !== "number") n.h = DEFAULT_NOTE_H;
-      if (!n.shape) n.shape = DEFAULT_SHAPE;
-    });
-    nextId = data.nextId || notes.length + 1;
-    // 화살표 기능이 생기기 전에 저장된 파일에는 arrows 가 아예 없다.
-    arrows = Array.isArray(data.arrows) ? data.arrows : [];
-    nextArrowId = data.nextArrowId || arrows.length + 1;
+    if (raw) {
+      const data = JSON.parse(raw);
+      tree = Array.isArray(data.tree) ? data.tree : [];
+      pagesData = data.pages && typeof data.pages === "object" ? data.pages : {};
+      nextTreeId = data.nextTreeId || 1;
+      activePageId = data.activePageId;
+      if (!activePageId || !pagesData[activePageId]) {
+        activePageId = findFirstPageId(tree);
+      }
+      Object.values(pagesData).forEach((p) => backfillNoteDefaults(p.notes || []));
+      if (activePageId && pagesData[activePageId] && tree.length > 0) {
+        return;
+      }
+    }
   } catch (e) {
     console.warn("불러오기 실패:", e);
+  }
+
+  // v2 데이터가 없다면: v1(페이지 기능 이전) 데이터를 페이지 하나로 옮겨오거나,
+  // 그것도 없으면 완전히 새로 시작한다.
+  const migrated = migrateLegacyData();
+  if (migrated) {
+    tree = [{ type: "page", id: migrated.pageId, name: "기본 페이지" }];
+    pagesData = { [migrated.pageId]: migrated.pageData };
+    activePageId = migrated.pageId;
+  } else {
+    const pageId = `p${nextTreeId++}`;
+    tree = [{ type: "page", id: pageId, name: "페이지 1" }];
+    pagesData = { [pageId]: createEmptyPageData() };
+    activePageId = pageId;
   }
 }
 
@@ -139,6 +260,262 @@ function redo() {
   restoreSnapshot(history[historyIndex]);
 }
 
+/* ===== 페이지 전환 =====
+ * 지금 열려 있는 페이지의 모든 실시간 상태(view/notes/arrows/선택/화살표 초안/퀵메뉴 등)를
+ * 통째로 다른 페이지 것으로 바꿔치기한다. undo/redo 의 restoreSnapshot 과 원리가 같다
+ * (DOM 비우고 다시 그리기) — 다만 view 도 같이 바꾸고, 히스토리는 페이지별로 따로 보관한다. */
+
+function loadPageIntoGlobals(pageData) {
+  world.querySelectorAll(".note").forEach((el) => el.remove());
+  arrowsLayerEl.querySelectorAll(".arrow").forEach((el) => el.remove());
+
+  notes = (pageData.notes || []).map((n) => ({ ...n }));
+  arrows = (pageData.arrows || []).map((a) => ({ ...a }));
+  Object.assign(view, pageData.view || { x: 0, y: 0, scale: 1 });
+  nextId = pageData.nextId || 1;
+  nextArrowId = pageData.nextArrowId || 1;
+  selectedIds = new Set();
+  selectedArrowIds = new Set();
+  cancelArrowDraft();
+  closeQuickMenu();
+
+  notes.forEach(renderNote);
+  arrows.forEach(renderArrow);
+  applyTransform(); // 내부에서 updateHandles 도 같이 갱신된다
+}
+
+function switchToPage(pageId) {
+  if (pageId === activePageId || !pagesData[pageId]) return;
+
+  pagesData[activePageId] = serializeCurrentPage();
+  pageHistories[activePageId] = { history, historyIndex };
+
+  activePageId = pageId;
+  loadPageIntoGlobals(pagesData[pageId]);
+
+  const savedHist = pageHistories[pageId];
+  if (savedHist) {
+    history = savedHist.history;
+    historyIndex = savedHist.historyIndex;
+  } else {
+    history = [{ notes: cloneNotes(), arrows: cloneArrows(), nextId, nextArrowId }];
+    historyIndex = 0;
+  }
+
+  renderSidebar();
+  save();
+}
+
+/* ===== 사이드바: 페이지 / 폴더 트리 ===== */
+
+function makeIconButton(label, title, onClick) {
+  const btn = document.createElement("button");
+  btn.type = "button";
+  btn.className = "tree-icon-btn";
+  btn.title = title;
+  btn.textContent = label;
+  btn.addEventListener("click", onClick);
+  return btn;
+}
+
+function startRenaming(nameEl, node) {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "tree-rename-input";
+  input.value = node.name;
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const commit = () => {
+    if (done) return;
+    done = true;
+    node.name = input.value.trim() || node.name;
+    renderSidebar();
+    save();
+  };
+  const cancel = () => {
+    if (done) return;
+    done = true;
+    renderSidebar();
+  };
+
+  // 이름 입력칸 안에서의 클릭/드래그가 페이지 전환·트리 접기 등으로 번지지 않게 막는다.
+  input.addEventListener("mousedown", (e) => e.stopPropagation());
+  input.addEventListener("click", (e) => e.stopPropagation());
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      commit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      cancel();
+    }
+  });
+  input.addEventListener("blur", commit);
+}
+
+function createPage(parentFolder) {
+  const id = `p${nextTreeId++}`;
+  pagesData[id] = createEmptyPageData();
+  const node = { type: "page", id, name: "새 페이지" };
+  const targetArray = parentFolder ? (parentFolder.children || (parentFolder.children = [])) : tree;
+  targetArray.push(node);
+  if (parentFolder) parentFolder.expanded = true;
+  switchToPage(id); // 안에서 renderSidebar()/save() 까지 처리된다
+}
+
+function createFolder(parentFolder) {
+  const id = `f${nextTreeId++}`;
+  const node = { type: "folder", id, name: "새 폴더", expanded: true, children: [] };
+  const targetArray = parentFolder ? (parentFolder.children || (parentFolder.children = [])) : tree;
+  targetArray.push(node);
+  if (parentFolder) parentFolder.expanded = true;
+  renderSidebar();
+  save();
+}
+
+function deleteNodeAndPages(id, pageIds) {
+  const info = findNodeInfo(tree, id);
+  if (!info) return;
+  info.array.splice(info.index, 1);
+
+  pageIds.forEach((pid) => {
+    delete pagesData[pid];
+    delete pageHistories[pid];
+  });
+
+  // 지금 보고 있던 페이지가 지워졌다면, 남아있는 페이지 중 아무거나로 옮겨간다.
+  // switchToPage 를 그대로 쓰지 않는 이유: 그 함수는 "현재 페이지를 저장"하는 것부터
+  // 시작하는데, 지금은 현재 페이지 자체가 방금 삭제된 대상이라 되살리면 안 된다.
+  if (pageIds.includes(activePageId)) {
+    const replacementId = findFirstPageId(tree);
+    activePageId = replacementId;
+    loadPageIntoGlobals(pagesData[replacementId]);
+    const savedHist = pageHistories[replacementId];
+    if (savedHist) {
+      history = savedHist.history;
+      historyIndex = savedHist.historyIndex;
+    } else {
+      history = [{ notes: cloneNotes(), arrows: cloneArrows(), nextId, nextArrowId }];
+      historyIndex = 0;
+    }
+  }
+
+  renderSidebar();
+  save();
+}
+
+function requestDeleteNode(node) {
+  const pageIds = collectPageIds(node);
+  const totalPages = collectPageIds({ type: "folder", children: tree }).length;
+  if (pageIds.length >= totalPages) {
+    alert("최소 한 개의 페이지는 있어야 합니다.");
+    return;
+  }
+
+  const message =
+    node.type === "folder"
+      ? pageIds.length > 0
+        ? `"${node.name}" 폴더와 그 안의 페이지 ${pageIds.length}개를 모두 삭제할까요? 되돌릴 수 없습니다.`
+        : `"${node.name}" 폴더를 삭제할까요?`
+      : `"${node.name}" 페이지를 삭제할까요? 되돌릴 수 없습니다.`;
+
+  if (!confirm(message)) return;
+  deleteNodeAndPages(node.id, pageIds);
+}
+
+function renderTreeNodes(nodes, container, depth) {
+  nodes.forEach((node) => {
+    const row = document.createElement("div");
+    row.className = "tree-row";
+    row.style.paddingLeft = `${depth * 16 + 6}px`;
+    row.dataset.id = node.id;
+
+    if (node.type === "folder") {
+      row.classList.add("tree-folder");
+      const caret = document.createElement("span");
+      caret.className = "tree-caret";
+      caret.textContent = node.expanded ? "▾" : "▸";
+      caret.addEventListener("click", (e) => {
+        e.stopPropagation();
+        node.expanded = !node.expanded;
+        renderSidebar();
+        save();
+      });
+      row.appendChild(caret);
+    } else {
+      row.classList.add("tree-page");
+      if (node.id === activePageId) row.classList.add("active");
+      const icon = document.createElement("span");
+      icon.className = "tree-page-icon";
+      icon.textContent = "▭";
+      row.appendChild(icon);
+    }
+
+    const nameEl = document.createElement("span");
+    nameEl.className = "tree-name";
+    nameEl.textContent = node.name;
+    nameEl.addEventListener("dblclick", (e) => {
+      e.stopPropagation();
+      startRenaming(nameEl, node);
+    });
+    row.appendChild(nameEl);
+
+    const actions = document.createElement("span");
+    actions.className = "tree-actions";
+    if (node.type === "folder") {
+      actions.appendChild(
+        makeIconButton("＋▭", "새 페이지", (e) => {
+          e.stopPropagation();
+          createPage(node);
+        })
+      );
+      actions.appendChild(
+        makeIconButton("＋▤", "새 폴더", (e) => {
+          e.stopPropagation();
+          createFolder(node);
+        })
+      );
+    }
+    actions.appendChild(
+      makeIconButton("×", "삭제", (e) => {
+        e.stopPropagation();
+        requestDeleteNode(node);
+      })
+    );
+    row.appendChild(actions);
+
+    if (node.type === "page") {
+      row.addEventListener("click", () => switchToPage(node.id));
+    } else {
+      // 폴더는 이름 부분을 클릭해도(더블클릭이 아니면) 펼치기/접기가 되게 한다.
+      row.addEventListener("click", () => {
+        node.expanded = !node.expanded;
+        renderSidebar();
+        save();
+      });
+    }
+
+    container.appendChild(row);
+
+    if (node.type === "folder" && node.expanded) {
+      renderTreeNodes(node.children || [], container, depth + 1);
+    }
+  });
+}
+
+function renderSidebar() {
+  pageTreeEl.innerHTML = "";
+  renderTreeNodes(tree, pageTreeEl, 0);
+}
+
+addPageBtn.addEventListener("click", () => createPage(null));
+addFolderBtn.addEventListener("click", () => createFolder(null));
+
 /* ===== 좌표 변환 & 화면 갱신 ===== */
 
 function applyTransform() {
@@ -154,10 +531,13 @@ function applyTransform() {
   updateHandles(); // 팬/줌으로 화면이 움직이면 크기조절 핸들 위치도 같이 갱신
 }
 
+// sx,sy 는 뷰포트(e.clientX/Y) 기준 좌표. #canvas 가 사이드바만큼 왼쪽으로 밀려 있으므로,
+// 그 오프셋을 먼저 빼야 #world 의 transform 과 같은 좌표계(캔버스 자신의 왼쪽 위 기준)가 된다.
 function screenToWorld(sx, sy) {
+  const canvasRect = canvas.getBoundingClientRect();
   return {
-    x: (sx - view.x) / view.scale,
-    y: (sy - view.y) / view.scale,
+    x: (sx - canvasRect.left - view.x) / view.scale,
+    y: (sy - canvasRect.top - view.y) / view.scale,
   };
 }
 
@@ -370,11 +750,14 @@ function toggleArrowSelection(id) {
 
 // 화면 좌표 기준 사각형과 "중앙점"이 겹치는 화살표들의 id 목록 (요구사항: 화살표 전체가
 // 아니라 중앙점 기준으로 영역 선택 판정).
+// rx1,ry1,rx2,ry2 는 뷰포트(e.clientX/Y) 기준 좌표라서, 화살표 중앙점(월드 좌표)도
+// 뷰포트 기준으로 바꿔서(캔버스 오프셋을 더해서) 비교해야 한다.
 function arrowsInScreenRect(rx1, ry1, rx2, ry2) {
   const left = Math.min(rx1, rx2);
   const right = Math.max(rx1, rx2);
   const top = Math.min(ry1, ry2);
   const bottom = Math.max(ry1, ry2);
+  const canvasRect = canvas.getBoundingClientRect();
   const ids = [];
   arrows.forEach((arrow) => {
     const g = arrowEl(arrow.id);
@@ -387,8 +770,8 @@ function arrowsInScreenRect(rx1, ry1, rx2, ry2) {
     const y2 = parseFloat(line.getAttribute("y2"));
     const midWorld = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 };
     const midScreen = {
-      x: midWorld.x * view.scale + view.x,
-      y: midWorld.y * view.scale + view.y,
+      x: midWorld.x * view.scale + view.x + canvasRect.left,
+      y: midWorld.y * view.scale + view.y + canvasRect.top,
     };
     if (midScreen.x >= left && midScreen.x <= right && midScreen.y >= top && midScreen.y <= bottom) {
       ids.push(arrow.id);
@@ -1015,8 +1398,11 @@ canvas.addEventListener("mousedown", (e) => {
     }
     if (!moved) return;
 
-    const left = Math.min(startX, ev.clientX);
-    const top = Math.min(startY, ev.clientY);
+    // selectionBoxEl 은 #canvas 기준으로 위치가 잡히므로(뷰포트 기준이 아니라),
+    // 캔버스 자신의 오프셋을 빼줘야 한다 (사이드바 때문에 #canvas 가 왼쪽으로 밀려 있음).
+    const canvasRect = canvas.getBoundingClientRect();
+    const left = Math.min(startX, ev.clientX) - canvasRect.left;
+    const top = Math.min(startY, ev.clientY) - canvasRect.top;
     selectionBoxEl.style.left = `${left}px`;
     selectionBoxEl.style.top = `${top}px`;
     selectionBoxEl.style.width = `${Math.abs(ev.clientX - startX)}px`;
@@ -1099,8 +1485,11 @@ canvas.addEventListener(
     );
 
     // 커서 아래의 월드 지점이 그대로 유지되도록 offset 을 재계산한다.
-    const mx = e.clientX;
-    const my = e.clientY;
+    // (뷰포트 좌표를 그대로 쓰면 안 되고, 캔버스 자신의 왼쪽 위 기준으로 바꿔야 한다 —
+    //  사이드바 때문에 #canvas 가 화면 왼쪽에서 떨어져 있다)
+    const canvasRect = canvas.getBoundingClientRect();
+    const mx = e.clientX - canvasRect.left;
+    const my = e.clientY - canvasRect.top;
     const wx = (mx - view.x) / view.scale;
     const wy = (my - view.y) / view.scale;
 
@@ -1205,11 +1594,13 @@ document.addEventListener("keydown", (e) => {
 
 initResizeHandles();
 setNextShape(nextShape); // 라벨/퀵메뉴 표시를 초기 상태와 맞춘다
-load();
-notes.forEach(renderNote);
-arrows.forEach(renderArrow);
-applyTransform();
+
+load(); // tree / pagesData / activePageId 를 채운다 (필요하면 v1 데이터 마이그레이션도 함께)
+loadPageIntoGlobals(pagesData[activePageId] || createEmptyPageData());
 
 // 히스토리 시작점: 지금 이 상태로 되돌아올 수 있게 첫 칸을 기록해둔다.
 history = [{ notes: cloneNotes(), arrows: cloneArrows(), nextId, nextArrowId }];
 historyIndex = 0;
+
+renderSidebar();
+save();

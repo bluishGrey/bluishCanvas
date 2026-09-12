@@ -7,6 +7,16 @@
   <link rel="stylesheet" href="styles.css" />
 </head>
 <body>
+  <!-- 페이지/폴더 트리를 보여주는 좌측 사이드바 -->
+  <div id="sidebar">
+    <div id="sidebar-header">
+      <span id="sidebar-title">페이지</span>
+      <button type="button" id="add-page-btn" class="tree-icon-btn" title="새 페이지">＋▭</button>
+      <button type="button" id="add-folder-btn" class="tree-icon-btn" title="새 폴더">＋▤</button>
+    </div>
+    <div id="page-tree"></div>
+  </div>
+
   <!-- 화면에 고정된 뷰포트. 이 안에서 팬/줌이 일어난다. -->
   <div id="canvas">
     <!-- 모든 메모가 들어가는 무한 평면. transform 으로 통째로 움직인다. -->
@@ -62,7 +72,8 @@
     화살표 <b>클릭</b> → 선택 &nbsp;·&nbsp;
     <b>Delete</b> → 선택된 메모/화살표 삭제 &nbsp;·&nbsp;
     <b>Ctrl+Z</b> → 실행취소 &nbsp;·&nbsp;
-    <b>Ctrl+Shift+Z</b> → 다시실행
+    <b>Ctrl+Shift+Z</b> → 다시실행 &nbsp;·&nbsp;
+    사이드바: 페이지/폴더 <b>더블클릭</b> → 이름 변경
   </div>
 
   <!-- 빈 곳 우클릭 시 뜨는 퀵메뉴: 메모 추가 + 다음 생성 도형 전환 -->

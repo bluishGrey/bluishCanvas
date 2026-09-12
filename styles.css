@@ -11,6 +11,7 @@
   --note-border: #b9c6dd;
   --accent: #3b6fd4;
   --text: #1f2733;
+  --sidebar-w: 240px;
 }
 
 html,
@@ -22,10 +23,13 @@ body {
   color: var(--text);
 }
 
-/* ===== 캔버스 뷰포트 ===== */
+/* ===== 캔버스 뷰포트 (좌측 사이드바 너비만큼 왼쪽을 비워둔다) ===== */
 #canvas {
   position: fixed;
-  inset: 0;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: var(--sidebar-w);
   background-color: var(--bg);
   /* 점 격자. 크기/위치는 app.js 에서 팬·줌에 맞춰 갱신한다. */
   background-image: radial-gradient(circle, var(--grid-dot) 1.4px, transparent 1.4px);
@@ -366,7 +370,8 @@ body {
 #hint {
   position: fixed;
   bottom: 14px;
-  left: 50%;
+  /* 화면 전체가 아니라, 사이드바를 뺀 캔버스 영역 안에서 가운데 오도록 보정한다. */
+  left: calc(var(--sidebar-w) + (100% - var(--sidebar-w)) / 2);
   transform: translateX(-50%);
   padding: 7px 14px;
   background: rgba(255, 255, 255, 0.9);
@@ -428,4 +433,132 @@ body {
   height: 1px;
   background: var(--note-border);
   margin: 4px 2px;
+}
+
+/* ===== 좌측 사이드바: 페이지 / 폴더 트리 ===== */
+#sidebar {
+  position: fixed;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: var(--sidebar-w);
+  background: #fff;
+  border-right: 1px solid var(--note-border);
+  display: flex;
+  flex-direction: column;
+  font-size: 13px;
+  z-index: 10;
+}
+
+#sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 8px;
+  border-bottom: 1px solid var(--note-border);
+  flex-shrink: 0;
+}
+
+#sidebar-title {
+  flex: 1;
+  font-weight: 600;
+  padding-left: 4px;
+}
+
+#page-tree {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 4px;
+}
+
+.tree-row {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 6px;
+  border-radius: 6px;
+  cursor: pointer;
+  color: var(--text);
+}
+
+.tree-row:hover {
+  background: var(--bg);
+}
+
+.tree-row.tree-page.active {
+  background: rgba(59, 111, 212, 0.12);
+  color: var(--accent);
+  font-weight: 600;
+}
+
+.tree-caret {
+  width: 14px;
+  flex-shrink: 0;
+  text-align: center;
+  color: #9aa7bd;
+  user-select: none;
+}
+
+.tree-folder .tree-caret {
+  cursor: pointer;
+}
+
+.tree-page-icon {
+  width: 14px;
+  flex-shrink: 0;
+  text-align: center;
+  font-size: 11px;
+  color: #9aa7bd;
+}
+
+.tree-name {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.tree-actions {
+  display: none;
+  flex-shrink: 0;
+  gap: 2px;
+}
+
+.tree-row:hover .tree-actions {
+  display: flex;
+}
+
+.tree-icon-btn {
+  border: none;
+  background: none;
+  border-radius: 4px;
+  padding: 2px 4px;
+  font-size: 11px;
+  color: #55617a;
+  cursor: pointer;
+  line-height: 1.4;
+}
+
+.tree-icon-btn:hover {
+  background: rgba(59, 111, 212, 0.12);
+  color: var(--accent);
+}
+
+#sidebar-header .tree-icon-btn {
+  font-size: 13px;
+}
+
+.tree-rename-input {
+  flex: 1;
+  min-width: 0;
+  font: inherit;
+  color: inherit;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 1px 4px;
+  background: #fff;
+}
+
+.tree-rename-input:focus {
+  outline: none;
 }
