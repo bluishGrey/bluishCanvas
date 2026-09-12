@@ -24,6 +24,8 @@ const sidebarEl = document.getElementById("sidebar");
 const pageTreeEl = document.getElementById("page-tree");
 const addPageBtn = document.getElementById("add-page-btn");
 const addFolderBtn = document.getElementById("add-folder-btn");
+const sidebarToggleBtn = document.getElementById("sidebar-toggle-btn");
+const sidebarOpenBtn = document.getElementById("sidebar-open-btn");
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 const STORAGE_KEY = "bluishCanvas.v2";
@@ -319,6 +321,11 @@ function makeIconButton(label, title, onClick) {
 }
 
 function startRenaming(nameEl, node) {
+  // 이름을 고치는 동안엔 드래그가 시작되지 않게 막는다 (renderSidebar 가 다시 그리면
+  // 페이지 행은 자동으로 draggable=true 로 복구된다).
+  const row = nameEl.closest(".tree-row");
+  if (row) row.draggable = false;
+
   const input = document.createElement("input");
   input.type = "text";
   input.className = "tree-rename-input";
@@ -428,6 +435,26 @@ function requestDeleteNode(node) {
   deleteNodeAndPages(node.id, pageIds);
 }
 
+// 드래그 중인 페이지를 이 폴더 안으로 옮긴다. (드래그로 옮기는 건 페이지만 가능 —
+// 폴더끼리 옮기는 건 이번 범위 밖)
+function movePageIntoFolder(pageId, folderId) {
+  const pageInfo = findNodeInfo(tree, pageId);
+  if (!pageInfo || pageInfo.node.type !== "page") return;
+  const folderInfo = findNodeInfo(tree, folderId);
+  if (!folderInfo || folderInfo.node.type !== "folder") return;
+
+  const folder = folderInfo.node;
+  if (!folder.children) folder.children = [];
+  if (pageInfo.array === folder.children) return; // 이미 이 폴더 바로 안에 있음
+
+  pageInfo.array.splice(pageInfo.index, 1);
+  folder.children.push(pageInfo.node);
+  folder.expanded = true;
+
+  renderSidebar();
+  save();
+}
+
 function renderTreeNodes(nodes, container, depth) {
   nodes.forEach((node) => {
     const row = document.createElement("div");
@@ -447,6 +474,22 @@ function renderTreeNodes(nodes, container, depth) {
         save();
       });
       row.appendChild(caret);
+
+      // 폴더는 드래그된 페이지를 받을 수 있는 대상이다.
+      row.addEventListener("dragover", (e) => {
+        e.preventDefault(); // 이걸 해줘야 drop 이벤트가 실제로 발생한다.
+        e.dataTransfer.dropEffect = "move";
+        row.classList.add("drop-target");
+      });
+      row.addEventListener("dragleave", () => {
+        row.classList.remove("drop-target");
+      });
+      row.addEventListener("drop", (e) => {
+        e.preventDefault();
+        row.classList.remove("drop-target");
+        const draggedId = e.dataTransfer.getData("text/plain");
+        if (draggedId) movePageIntoFolder(draggedId, node.id);
+      });
     } else {
       row.classList.add("tree-page");
       if (node.id === activePageId) row.classList.add("active");
@@ -454,6 +497,17 @@ function renderTreeNodes(nodes, container, depth) {
       icon.className = "tree-page-icon";
       icon.textContent = "▭";
       row.appendChild(icon);
+
+      // 페이지는 드래그해서 폴더 위에 놓을 수 있는 대상이다.
+      row.draggable = true;
+      row.addEventListener("dragstart", (e) => {
+        e.dataTransfer.setData("text/plain", node.id);
+        e.dataTransfer.effectAllowed = "move";
+        row.classList.add("dragging-row");
+      });
+      row.addEventListener("dragend", () => {
+        row.classList.remove("dragging-row");
+      });
     }
 
     const nameEl = document.createElement("span");
@@ -481,6 +535,12 @@ function renderTreeNodes(nodes, container, depth) {
         })
       );
     }
+    actions.appendChild(
+      makeIconButton("✎", "이름 변경", (e) => {
+        e.stopPropagation();
+        startRenaming(nameEl, node);
+      })
+    );
     actions.appendChild(
       makeIconButton("×", "삭제", (e) => {
         e.stopPropagation();
@@ -515,6 +575,37 @@ function renderSidebar() {
 
 addPageBtn.addEventListener("click", () => createPage(null));
 addFolderBtn.addEventListener("click", () => createFolder(null));
+
+/* ===== 사이드바 접기 / 펼치기 ===== */
+
+function setSidebarCollapsed(collapsed) {
+  document.body.classList.toggle("sidebar-collapsed", collapsed);
+}
+
+function toggleSidebar() {
+  setSidebarCollapsed(!document.body.classList.contains("sidebar-collapsed"));
+}
+
+sidebarToggleBtn.addEventListener("click", toggleSidebar);
+sidebarOpenBtn.addEventListener("click", toggleSidebar);
+
+document.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "b") return;
+
+  // 텍스트 편집/입력 중이면 다른 단축키들과 마찬가지로 건드리지 않는다.
+  const active = document.activeElement;
+  if (
+    active &&
+    (active.isContentEditable ||
+      active.tagName === "INPUT" ||
+      active.tagName === "TEXTAREA")
+  ) {
+    return;
+  }
+
+  e.preventDefault(); // 일부 브라우저의 기본 Ctrl+B(북마크바 토글 등) 동작 방지
+  toggleSidebar();
+});
 
 /* ===== 좌표 변환 & 화면 갱신 ===== */
 

@@ -562,3 +562,52 @@ body {
 .tree-rename-input:focus {
   outline: none;
 }
+
+/* ===== 사이드바 접기/펼치기 ===== */
+/* 캔버스 왼쪽 여백과 안내문구 중앙 정렬이 이 변수 하나로 같이 좌우되므로,
+   사이드바를 접을 때는 이 값만 0으로 바꿔주면 나머지는 CSS가 알아서 따라온다. */
+body.sidebar-collapsed {
+  --sidebar-w: 0px;
+}
+
+body.sidebar-collapsed #sidebar {
+  display: none;
+}
+
+#sidebar-open-btn {
+  display: none;
+  position: fixed;
+  top: 14px;
+  left: 14px;
+  z-index: 15;
+  width: 32px;
+  height: 32px;
+  align-items: center;
+  justify-content: center;
+  background: #fff;
+  border: 1px solid var(--note-border);
+  border-radius: 8px;
+  font-size: 15px;
+  color: #55617a;
+  cursor: pointer;
+}
+
+#sidebar-open-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+body.sidebar-collapsed #sidebar-open-btn {
+  display: flex;
+}
+
+/* ===== 사이드바 드래그 앤 드롭 (페이지를 폴더로 이동) ===== */
+.tree-row.dragging-row {
+  opacity: 0.4;
+}
+
+.tree-row.drop-target {
+  background: rgba(59, 111, 212, 0.18);
+  outline: 2px dashed var(--accent);
+  outline-offset: -2px;
+}
