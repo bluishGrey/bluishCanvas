@@ -19,6 +19,13 @@
       <button type="button" id="add-folder-btn" class="tree-icon-btn" title="새 폴더">＋▤</button>
     </div>
     <div id="page-tree"></div>
+
+    <!-- 전체(모든 페이지/폴더) 내보내기 · 가져오기 -->
+    <div id="sidebar-footer">
+      <button type="button" id="export-btn" class="sidebar-footer-btn" title="전체 폴더/페이지를 JSON 파일로 내보내기">⬇ 내보내기</button>
+      <button type="button" id="import-btn" class="sidebar-footer-btn" title="JSON 백업 파일 가져오기">⬆ 가져오기</button>
+      <input type="file" id="import-file-input" accept="application/json,.json" hidden />
+    </div>
   </div>
 
   <!-- 화면에 고정된 뷰포트. 이 안에서 팬/줌이 일어난다. -->
@@ -78,7 +85,8 @@
     <b>Ctrl+Z</b> → 실행취소 &nbsp;·&nbsp;
     <b>Ctrl+Shift+Z</b> → 다시실행 &nbsp;·&nbsp;
     <b>Ctrl+B</b> → 사이드바 접기/펼치기 &nbsp;·&nbsp;
-    사이드바: 페이지/폴더 <b>더블클릭</b> 또는 펜 아이콘 → 이름 변경, 페이지를 폴더 위로 <b>드래그</b> → 이동
+    사이드바: 페이지/폴더 <b>더블클릭</b> 또는 펜 아이콘 → 이름 변경, 페이지를 폴더 위로 <b>드래그</b> → 이동,
+    <b>Ctrl/Shift+클릭</b> → 다중 선택, 하단 <b>내보내기/가져오기</b> → 전체 백업
   </div>
 
   <!-- 빈 곳 우클릭 시 뜨는 퀵메뉴: 메모 추가 + 다음 생성 도형 전환 -->

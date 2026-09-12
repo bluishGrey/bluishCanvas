@@ -26,6 +26,9 @@ const addPageBtn = document.getElementById("add-page-btn");
 const addFolderBtn = document.getElementById("add-folder-btn");
 const sidebarToggleBtn = document.getElementById("sidebar-toggle-btn");
 const sidebarOpenBtn = document.getElementById("sidebar-open-btn");
+const exportBtn = document.getElementById("export-btn");
+const importBtn = document.getElementById("import-btn");
+const importFileInput = document.getElementById("import-file-input");
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 const STORAGE_KEY = "bluishCanvas.v2";
@@ -306,8 +309,17 @@ function switchToPage(pageId) {
     historyIndex = 0;
   }
 
-  renderSidebar();
+  updateActivePageHighlight();
   save();
+}
+
+// "지금 열려 있는 페이지" 표시만 가볍게 갱신한다 (트리 구조는 안 바뀌므로 전체를
+// 다시 그릴 필요가 없다 — 특히 renderSidebar() 로 통째로 다시 그리면 그 시점에
+// 더블클릭 중이던 DOM 요소가 통째로 교체돼서 더블클릭 자체가 인식되지 않는 문제가 있었다).
+function updateActivePageHighlight() {
+  pageTreeEl.querySelectorAll(".tree-row.tree-page").forEach((row) => {
+    row.classList.toggle("active", row.dataset.id === activePageId);
+  });
 }
 
 /* ===== 사이드바: 페이지 / 폴더 트리 ===== */
@@ -441,7 +453,16 @@ function requestDeleteNode(node) {
 
 function setTreeSelection(idList) {
   selectedTreeIds = new Set(idList);
-  renderSidebar(); // 트리 크기가 작아서 전체를 다시 그려도 부담 없다.
+  updateTreeSelectionHighlight();
+}
+
+// 선택 강조(.tree-selected)만 갱신한다. renderSidebar() 처럼 DOM을 통째로 다시 만들지
+// 않는 이유: 클릭 한 번마다 DOM 요소가 전부 새로 생기면, 더블클릭의 두 클릭 사이에
+// 대상 요소가 바뀌어버려서 더블클릭(이름 변경) 자체가 인식되지 않게 된다.
+function updateTreeSelectionHighlight() {
+  pageTreeEl.querySelectorAll(".tree-row").forEach((row) => {
+    row.classList.toggle("tree-selected", selectedTreeIds.has(row.dataset.id));
+  });
 }
 
 function selectOnlyTree(id) {
@@ -664,9 +685,8 @@ function renderTreeNodes(nodes, container, depth) {
       // 갱신은 한 틱 미룬다 (드래그 자체엔 영향 없음 — 이미 위에서 draggedIds 를 구해뒀다).
       if (!selectedTreeIds.has(node.id)) {
         setTimeout(() => {
-          selectedTreeIds = new Set([node.id]);
           treeSelectionAnchorId = node.id;
-          renderSidebar();
+          setTreeSelection([node.id]);
         }, 0);
       }
     });
@@ -758,13 +778,11 @@ function renderTreeNodes(nodes, container, depth) {
         return;
       }
 
-      selectedTreeIds = new Set([node.id]);
       treeSelectionAnchorId = node.id;
+      setTreeSelection([node.id]); // 가벼운 클래스 갱신만 — 더블클릭 도중 DOM을 통째로 바꾸지 않는다
 
       if (node.type === "page") {
-        switchToPage(node.id); // 실제로 페이지가 바뀌면 내부에서 renderSidebar() 까지 처리된다
-        renderSidebar(); // 이미 열려 있던 페이지를 클릭한 경우엔 switchToPage 가 조기 종료하므로,
-        // 선택 강조(다른 항목의 다중 선택 해제 등)가 반영되도록 한 번 더 보장한다.
+        switchToPage(node.id); // 실제로 페이지가 바뀔 때만 내부에서 renderSidebar() 까지 처리한다
       } else {
         node.expanded = !node.expanded;
         renderSidebar();
@@ -839,6 +857,172 @@ document.addEventListener("keydown", (e) => {
 
   e.preventDefault(); // 일부 브라우저의 기본 Ctrl+B(북마크바 토글 등) 동작 방지
   toggleSidebar();
+});
+
+/* ===== 전체 내보내기 / 가져오기 (JSON 백업) ===== */
+
+function pad2(n) {
+  return String(n).padStart(2, "0");
+}
+
+// "이름"이 siblings 안에서 이미 쓰이고 있으면 "이름 2", "이름 3", ... 처럼 안 겹치는 걸 찾는다.
+function uniqueNameAmong(siblings, desiredName) {
+  const existingNames = new Set(siblings.map((n) => n.name));
+  if (!existingNames.has(desiredName)) return desiredName;
+  let i = 2;
+  while (existingNames.has(`${desiredName} ${i}`)) i++;
+  return `${desiredName} ${i}`;
+}
+
+function exportAllData() {
+  // 지금 화면에 떠 있는 페이지의 실시간 상태부터 pagesData 에 반영해야, 그것도 같이 내보내진다.
+  pagesData[activePageId] = serializeCurrentPage();
+
+  const data = {
+    app: "bluishCanvas",
+    exportVersion: 1,
+    exportedAt: new Date().toISOString(),
+    tree,
+    pages: pagesData,
+    activePageId,
+  };
+
+  const json = JSON.stringify(data, null, 2);
+  const blob = new Blob([json], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+
+  const now = new Date();
+  const stamp =
+    `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}` +
+    `_${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}`;
+
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `bluishCanvas-backup-${stamp}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+}
+
+// 가져온 트리 안의 모든 폴더/페이지 id를 지금 세션 기준으로 새로 발급한다. 다른 브라우저/
+// 시점에서 만든 백업이면 id가 지금 것과 우연히 겹칠 수 있어서, 이름 충돌 여부와 상관없이
+// 항상 다시 발급하고 pagesData 도 새 id로 옮겨 담는다.
+function remapImportedIds(importedTree, importedPages) {
+  const idRemap = new Map();
+
+  function remapNode(node) {
+    const prefix = node.type === "folder" ? "f" : "p";
+    const newId = `${prefix}${nextTreeId++}`;
+    idRemap.set(node.id, newId);
+    node.id = newId;
+    if (node.type === "folder") {
+      (node.children || []).forEach(remapNode);
+    }
+  }
+  importedTree.forEach(remapNode);
+
+  idRemap.forEach((newId, oldId) => {
+    if (importedPages[oldId]) {
+      pagesData[newId] = importedPages[oldId];
+    }
+  });
+}
+
+// 최상위(루트) 계층에서 이름이 겹치는 항목마다 확인창을 띄워 "덮어쓰기"/"새 이름으로 추가"를 정한다.
+function mergeImportedTree(importedTree) {
+  importedTree.forEach((importedNode) => {
+    const existingIdx = tree.findIndex((n) => n.name === importedNode.name);
+    if (existingIdx === -1) {
+      tree.push(importedNode);
+      return;
+    }
+
+    const existing = tree[existingIdx];
+    const existingPageIds = collectPageIds(existing);
+    const warnPart =
+      existing.type === "folder" && existingPageIds.length > 0
+        ? ` (안의 페이지 ${existingPageIds.length}개도 함께 삭제됩니다)`
+        : "";
+    const suggestedName = uniqueNameAmong(tree, importedNode.name);
+
+    const overwrite = confirm(
+      `"${importedNode.name}" 이름이 이미 있습니다${warnPart}.\n\n` +
+        `확인 → 기존 항목을 덮어쓰기\n취소 → 새 이름으로 추가 (예: "${suggestedName}")`
+    );
+
+    if (overwrite) {
+      existingPageIds.forEach((pid) => {
+        delete pagesData[pid];
+        delete pageHistories[pid];
+      });
+      tree.splice(existingIdx, 1, importedNode);
+    } else {
+      importedNode.name = suggestedName;
+      tree.push(importedNode);
+    }
+  });
+}
+
+function importBackup(data) {
+  if (!data || !Array.isArray(data.tree) || !data.pages || typeof data.pages !== "object") {
+    alert("올바른 백업 파일이 아닙니다.");
+    return;
+  }
+  if (data.tree.length === 0) {
+    alert("백업 파일에 페이지가 없습니다.");
+    return;
+  }
+
+  remapImportedIds(data.tree, data.pages);
+  // 예전 버전 백업(도형/크기 필드가 없던 시절)을 가져와도 문제없도록 기본값을 채워준다.
+  Object.values(pagesData).forEach((p) => backfillNoteDefaults(p.notes || []));
+
+  mergeImportedTree(data.tree);
+
+  // 지금 보고 있던 페이지가 (덮어쓰기로) 사라졌다면 남아있는 페이지로 옮겨간다.
+  if (!pagesData[activePageId]) {
+    const replacementId = findFirstPageId(tree);
+    if (replacementId) {
+      activePageId = replacementId;
+      loadPageIntoGlobals(pagesData[replacementId]);
+      const savedHist = pageHistories[replacementId];
+      if (savedHist) {
+        history = savedHist.history;
+        historyIndex = savedHist.historyIndex;
+      } else {
+        history = [{ notes: cloneNotes(), arrows: cloneArrows(), nextId, nextArrowId }];
+        historyIndex = 0;
+      }
+    }
+  }
+
+  renderSidebar();
+  save();
+  alert("가져오기를 완료했습니다.");
+}
+
+exportBtn.addEventListener("click", exportAllData);
+importBtn.addEventListener("click", () => importFileInput.click());
+importFileInput.addEventListener("change", (e) => {
+  const file = e.target.files[0];
+  if (!file) return;
+
+  const reader = new FileReader();
+  reader.onload = () => {
+    importFileInput.value = ""; // 같은 파일을 다시 골라도 change 이벤트가 또 발생하도록
+    try {
+      const data = JSON.parse(reader.result);
+      importBackup(data);
+    } catch (err) {
+      alert("파일을 읽는 중 문제가 발생했습니다. 올바른 JSON 파일인지 확인해주세요.");
+    }
+  };
+  reader.onerror = () => {
+    importFileInput.value = "";
+    alert("파일을 읽는 중 문제가 발생했습니다.");
+  };
+  reader.readAsText(file);
 });
 
 /* ===== 좌표 변환 & 화면 갱신 ===== */

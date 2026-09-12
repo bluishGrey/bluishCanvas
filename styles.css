@@ -471,6 +471,30 @@ body {
   padding: 6px 4px;
 }
 
+#sidebar-footer {
+  display: flex;
+  gap: 4px;
+  padding: 8px;
+  border-top: 1px solid var(--note-border);
+  flex-shrink: 0;
+}
+
+.sidebar-footer-btn {
+  flex: 1;
+  border: 1px solid var(--note-border);
+  background: #fff;
+  border-radius: 6px;
+  padding: 6px 4px;
+  font-size: 12px;
+  color: #55617a;
+  cursor: pointer;
+}
+
+.sidebar-footer-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .tree-row {
   position: relative; /* drop-before/after 선(::before/::after)의 기준점 */
   display: flex;
