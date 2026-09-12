@@ -121,8 +121,23 @@ body {
   border-radius: 50%;
 }
 
+/* 마름모: border 를 그대로 두고 clip-path 로 자르면, 뾰족한 꼭짓점에서
+   테두리가 삐죽하게 튀어나오거나 끊겨 보인다 (border 는 원래 사각형 네 모서리를
+   기준으로 이어붙는데, clip-path 가 그 이음매가 아닌 변의 중간을 잘라버리기 때문).
+   그래서 border 속성을 아예 안 쓰고, "테두리색 배경 위에 1px 안쪽에서 본문색으로
+   다시 덮어 그리기" 방식의 이중 레이어로 테두리를 흉내낸다. */
 .note[data-shape="diamond"] .note-shape {
+  border: none;
   border-radius: 0;
+  background: var(--note-border);
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+}
+
+.note[data-shape="diamond"] .note-shape::after {
+  content: "";
+  position: absolute;
+  inset: 1px;
+  background: var(--note-bg);
   clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
 }
 
@@ -133,6 +148,12 @@ body {
 .note.selected .note-shape {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(59, 111, 212, 0.35), 0 4px 14px rgba(31, 39, 51, 0.12);
+}
+
+/* 마름모가 선택됐을 때는 border-color 가 아니라, "테두리 역할"을 하는
+   바깥쪽 배경색 자체를 강조색으로 바꿔야 파란 테두리처럼 보인다. */
+.note.selected[data-shape="diamond"] .note-shape {
+  background: var(--accent);
 }
 
 /* 메모에 마우스를 올렸을 때만 보이는 삭제 버튼.
