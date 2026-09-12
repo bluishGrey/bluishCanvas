@@ -126,11 +126,16 @@ body {
    기준으로 이어붙는데, clip-path 가 그 이음매가 아닌 변의 중간을 잘라버리기 때문).
    그래서 border 속성을 아예 안 쓰고, "테두리색 배경 위에 1px 안쪽에서 본문색으로
    다시 덮어 그리기" 방식의 이중 레이어로 테두리를 흉내낸다. */
+/* clip-path 는 box-shadow 까지 도형 모양대로 통째로 잘라버려서(그림자가 사각형
+   기준으로 그려지다가 잘려 거의 안 보이게 됨), 마름모는 box-shadow 대신
+   도형의 실제(잘린) 실루엣을 따라가는 filter: drop-shadow() 를 쓴다. */
 .note[data-shape="diamond"] .note-shape {
   border: none;
   border-radius: 0;
   background: var(--note-border);
   clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  box-shadow: none;
+  filter: drop-shadow(0 4px 14px rgba(31, 39, 51, 0.12));
 }
 
 .note[data-shape="diamond"] .note-shape::after {
@@ -145,15 +150,22 @@ body {
   box-shadow: 0 10px 26px rgba(31, 39, 51, 0.22);
 }
 
+.note.dragging[data-shape="diamond"] .note-shape {
+  filter: drop-shadow(0 10px 26px rgba(31, 39, 51, 0.22));
+}
+
 .note.selected .note-shape {
   border-color: var(--accent);
   box-shadow: 0 0 0 2px rgba(59, 111, 212, 0.35), 0 4px 14px rgba(31, 39, 51, 0.12);
 }
 
 /* 마름모가 선택됐을 때는 border-color 가 아니라, "테두리 역할"을 하는
-   바깥쪽 배경색 자체를 강조색으로 바꿔야 파란 테두리처럼 보인다. */
+   바깥쪽 배경색 자체를 강조색으로 바꿔야 파란 테두리처럼 보인다. drop-shadow 는
+   box-shadow 의 spread(0 0 0 2px) 같은 "테두리 링" 표현을 못 하므로, 대신
+   작은 번짐의 강조색 그림자를 겹쳐서 비슷한 느낌을 낸다. */
 .note.selected[data-shape="diamond"] .note-shape {
   background: var(--accent);
+  filter: drop-shadow(0 0 3px rgba(59, 111, 212, 0.7)) drop-shadow(0 4px 14px rgba(31, 39, 51, 0.12));
 }
 
 /* 메모에 마우스를 올렸을 때만 보이는 삭제 버튼.
