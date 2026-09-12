@@ -5,3 +5,8 @@ Thumbs.db
 # Editor
 .vscode/
 .idea/
+
+# 사이드바 "내보내기"로 만들어지는 백업 파일 (bluishCanvas-backup-2026-09-12_161653.json 형태).
+# 프로젝트 폴더에 두고 쓰더라도 실수로 git에 올라가지 않게 막는다.
+bluishCanvas-backup-*.json
+*.json
