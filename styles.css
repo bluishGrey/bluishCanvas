@@ -157,6 +157,51 @@ body {
   display: none;
 }
 
+/* 화살표 라벨: 화살표 중간에 뜨는 짧은 텍스트 + 흰 배경 */
+.arrow-label-bg {
+  fill: #fff;
+  stroke: var(--note-border);
+  stroke-width: 1;
+  pointer-events: none;
+}
+
+.arrow-label-text {
+  font-size: 12px;
+  fill: #33415c;
+  pointer-events: none;
+  user-select: none;
+}
+
+.arrow.selected .arrow-label-bg {
+  stroke: var(--accent);
+}
+
+.arrow.selected .arrow-label-text {
+  fill: var(--accent);
+}
+
+.arrow-label-bg[hidden],
+.arrow-label-text[hidden] {
+  display: none;
+}
+
+.arrow-label-input {
+  width: 100%;
+  height: 100%;
+  box-sizing: border-box;
+  font: inherit;
+  font-size: 12px;
+  text-align: center;
+  padding: 2px 4px;
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  outline: none;
+  background: #fff;
+  /* #arrows-layer(svg 루트)가 pointer-events:none 이라 상속받으면 클릭이 이 입력칸을
+     그냥 통과해버린다(밑에 있는 화살표 클릭으로 오인돼 바로 커밋/닫힘) — 명시적으로 되살린다. */
+  pointer-events: auto;
+}
+
 /* ===== 메모 카드 ===== */
 /* 가로/세로 크기(width, height)는 app.js 가 인라인 스타일로 지정한다 (크기조절 대상). */
 .note {

@@ -50,10 +50,11 @@ let nextId = 1;
 let selectedIds = new Set(); // 현재 선택된 메모 id 들
 let nextShape = DEFAULT_SHAPE; // 다음에 빈 곳을 더블클릭(또는 퀵메뉴로 생성)할 때 쓸 도형
 
-let arrows = []; // { id, fromId, toId }
+let arrows = []; // { id, fromId, toId, label? }
 let nextArrowId = 1;
 let selectedArrowIds = new Set();
 let arrowDraft = null; // 화살표 연결 모드 중일 때만 { fromId }
+let editingArrowLabelId = null; // 화살표 라벨을 입력 중인 화살표 id (한 번에 하나만)
 
 // 실행취소/다시실행: notes 의 스냅샷 목록. history[historyIndex] 가 현재 상태.
 // 팬/줌은 기록 대상이 아니다 (생성/이동/삭제/텍스트 수정만 기록).
@@ -1240,10 +1241,57 @@ function updateArrowGeometry(arrow) {
     line.setAttribute("x2", p2.x);
     line.setAttribute("y2", p2.y);
   });
+
+  updateArrowLabelPosition(arrow, g, p1, p2);
 }
 
 function updateAllArrowGeometry() {
   arrows.forEach(updateArrowGeometry);
+}
+
+// 화살표 중간 지점에 라벨(배경+텍스트)을 그린다. 라벨이 없으면 감춘다.
+// 화살표가 움직이거나 크기가 바뀔 때마다(updateArrowGeometry) 매번 다시 호출된다.
+function updateArrowLabelPosition(arrow, g, p1, p2) {
+  const text = g.querySelector(".arrow-label-text");
+  const bg = g.querySelector(".arrow-label-bg");
+  if (!text || !bg) return;
+
+  const label = arrow.label || "";
+  if (!label) {
+    text.setAttribute("hidden", "");
+    bg.setAttribute("hidden", "");
+    text.textContent = "";
+    return;
+  }
+
+  const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
+  text.textContent = label;
+  text.setAttribute("x", mid.x);
+  text.setAttribute("y", mid.y);
+  text.removeAttribute("hidden");
+  bg.removeAttribute("hidden");
+
+  // 배경 사각형은 실제 렌더된 글자 크기(getBBox)에 여백을 더해서 맞춘다.
+  const box = text.getBBox();
+  const padX = 4;
+  const padY = 2;
+  bg.setAttribute("x", box.x - padX);
+  bg.setAttribute("y", box.y - padY);
+  bg.setAttribute("width", box.width + padX * 2);
+  bg.setAttribute("height", box.height + padY * 2);
+}
+
+// 화살표의 현재 중간 지점(월드 좌표)을 실제 렌더된 선 좌표에서 읽어온다.
+function arrowMidpointWorld(arrow) {
+  const g = arrowEl(arrow.id);
+  if (!g) return null;
+  const line = g.querySelector(".arrow-visible");
+  if (!line) return null;
+  const x1 = parseFloat(line.getAttribute("x1"));
+  const y1 = parseFloat(line.getAttribute("y1"));
+  const x2 = parseFloat(line.getAttribute("x2"));
+  const y2 = parseFloat(line.getAttribute("y2"));
+  return { x: (x1 + x2) / 2, y: (y1 + y2) / 2 };
 }
 
 function renderArrow(arrow) {
@@ -1258,8 +1306,23 @@ function renderArrow(arrow) {
   visible.setAttribute("class", "arrow-visible");
   visible.setAttribute("marker-end", "url(#arrowhead)");
 
+  // 라벨 배경 + 텍스트. 라벨이 없는 화살표는 hidden 상태로 그냥 존재만 한다
+  // (updateArrowLabelPosition 이 label 유무에 따라 보이기/감추기를 매번 처리).
+  const labelBg = document.createElementNS(SVG_NS, "rect");
+  labelBg.setAttribute("class", "arrow-label-bg");
+  labelBg.setAttribute("rx", "3");
+  labelBg.setAttribute("hidden", "");
+
+  const labelText = document.createElementNS(SVG_NS, "text");
+  labelText.setAttribute("class", "arrow-label-text");
+  labelText.setAttribute("text-anchor", "middle");
+  labelText.setAttribute("dominant-baseline", "middle");
+  labelText.setAttribute("hidden", "");
+
   g.appendChild(hit);
   g.appendChild(visible);
+  g.appendChild(labelBg);
+  g.appendChild(labelText);
   arrowsLayerEl.appendChild(g);
 
   // 화살표 선(정확히는 두꺼운 클릭 판정용 선) 클릭 → 선택. 메모 클릭과 같은 원칙:
@@ -1275,6 +1338,14 @@ function renderArrow(arrow) {
       deselectAll();
       selectOnlyArrow(arrow.id);
     }
+  });
+
+  // 더블클릭 → 라벨 입력 모드.
+  hit.addEventListener("dblclick", (e) => {
+    if (arrowDraft) return;
+    e.preventDefault();
+    e.stopPropagation();
+    startArrowLabelEdit(arrow.id);
   });
 
   updateArrowGeometry(arrow);
@@ -1341,15 +1412,8 @@ function arrowsInScreenRect(rx1, ry1, rx2, ry2) {
   const canvasRect = canvas.getBoundingClientRect();
   const ids = [];
   arrows.forEach((arrow) => {
-    const g = arrowEl(arrow.id);
-    if (!g) return;
-    const line = g.querySelector(".arrow-visible");
-    if (!line) return;
-    const x1 = parseFloat(line.getAttribute("x1"));
-    const y1 = parseFloat(line.getAttribute("y1"));
-    const x2 = parseFloat(line.getAttribute("x2"));
-    const y2 = parseFloat(line.getAttribute("y2"));
-    const midWorld = { x: (x1 + x2) / 2, y: (y1 + y2) / 2 };
+    const midWorld = arrowMidpointWorld(arrow);
+    if (!midWorld) return;
     const midScreen = {
       x: midWorld.x * view.scale + view.x + canvasRect.left,
       y: midWorld.y * view.scale + view.y + canvasRect.top,
@@ -1378,6 +1442,103 @@ function removeArrowFromState(id) {
   if (el) el.remove();
   selectedArrowIds.delete(id);
 }
+
+/* ===== 화살표 라벨 편집 (더블클릭으로 시작) =====
+ * SVG 안에 <foreignObject>로 진짜 <input>을 띄운다 — arrows-layer 가 #world 의 자식이라
+ * 팬/줌 transform 을 그대로 물려받으므로, 입력칸이 화살표를 따라 저절로 움직이고
+ * 확대/축소도 다른 화살표/메모와 똑같이 맞춰진다(화면 좌표를 따로 계산할 필요 없음). */
+
+const ARROW_LABEL_EDIT_W = 120;
+const ARROW_LABEL_EDIT_H = 26;
+
+function startArrowLabelEdit(id) {
+  if (editingArrowLabelId !== null) return; // 문서 캡처 리스너가 이전 입력을 먼저 커밋해서 닫아준다
+  const arrow = arrows.find((a) => a.id === id);
+  const g = arrowEl(id);
+  const mid = arrowMidpointWorld(arrow);
+  if (!arrow || !g || !mid) return;
+
+  editingArrowLabelId = id;
+
+  const fo = document.createElementNS(SVG_NS, "foreignObject");
+  fo.setAttribute("class", "arrow-label-edit");
+  fo.setAttribute("x", mid.x - ARROW_LABEL_EDIT_W / 2);
+  fo.setAttribute("y", mid.y - ARROW_LABEL_EDIT_H / 2);
+  fo.setAttribute("width", ARROW_LABEL_EDIT_W);
+  fo.setAttribute("height", ARROW_LABEL_EDIT_H);
+
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "arrow-label-input";
+  input.maxLength = 20;
+  input.value = arrow.label || "";
+  fo.appendChild(input);
+  g.appendChild(fo);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const commit = () => {
+    if (done) return;
+    done = true;
+    finishArrowLabelEdit(id, input.value.trim(), fo);
+  };
+  const cancel = () => {
+    if (done) return;
+    done = true;
+    finishArrowLabelEdit(id, null, fo);
+  };
+
+  input.addEventListener("mousedown", (e) => e.stopPropagation());
+  input.addEventListener("click", (e) => e.stopPropagation());
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      commit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      cancel();
+    }
+  });
+  input.addEventListener("blur", commit);
+}
+
+// newLabel === null 이면 취소(값 변경 없음), 문자열이면 그 값으로 확정.
+function finishArrowLabelEdit(id, newLabel, fo) {
+  editingArrowLabelId = null;
+  fo.remove();
+  if (newLabel === null) return;
+
+  const arrow = arrows.find((a) => a.id === id);
+  if (!arrow) return;
+  const oldLabel = arrow.label || "";
+  if (newLabel === oldLabel) return; // 변경 없으면 히스토리도 남기지 않는다
+
+  if (newLabel === "") {
+    delete arrow.label;
+  } else {
+    arrow.label = newLabel;
+  }
+  updateArrowGeometry(arrow);
+  commitChange();
+}
+
+// 라벨 입력 중에 다른 곳을 클릭하면(다른 화살표, 메모, 빈 캔버스 등) 그 클릭이
+// 각자의 mousedown 핸들러에서 stopPropagation/preventDefault 를 하더라도 항상 먼저
+// 이 커밋을 실행하도록 캡처 단계에 건다.
+document.addEventListener(
+  "mousedown",
+  (e) => {
+    if (editingArrowLabelId === null) return;
+    const input = arrowsLayerEl.querySelector(".arrow-label-input");
+    if (input && e.target !== input) {
+      input.blur();
+    }
+  },
+  true
+);
 
 // 선택된 메모(들)와 화살표(들)를 한 번에, 히스토리 한 칸으로 지운다.
 function deleteSelectedObjects() {
