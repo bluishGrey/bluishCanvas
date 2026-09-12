@@ -39,6 +39,11 @@ body {
   cursor: grabbing;
 }
 
+/* 화살표 연결 모드(메모 우클릭 후) 중에는 캔버스 커서를 십자선으로 바꿔준다. */
+#canvas.linking {
+  cursor: crosshair;
+}
+
 /* ===== 다중 선택 영역 박스 (화면 좌표, transform 영향 안 받음) ===== */
 #selection-box {
   position: absolute;
@@ -91,6 +96,61 @@ body {
   width: 0;
   height: 0;
   transform-origin: 0 0;
+}
+
+/* ===== 메모 사이 화살표 (월드 좌표 — #world 의 transform 을 그대로 받는다) ===== */
+#arrows-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  overflow: visible; /* svg 기본 300x150 박스 밖으로 그려도 잘리지 않게 */
+  pointer-events: none;
+}
+
+.arrow-marker-fill {
+  fill: var(--note-border);
+}
+
+.arrow-marker-fill-accent {
+  fill: var(--accent);
+}
+
+/* 실제로 보이는 얇은 선 */
+.arrow-visible {
+  fill: none;
+  stroke: var(--note-border);
+  stroke-width: 2;
+  pointer-events: none;
+}
+
+.arrow.selected .arrow-visible {
+  stroke: var(--accent);
+  stroke-width: 2.5;
+}
+
+/* 클릭 판정용 — 안 보이지만 훨씬 두꺼운 선. "선 위 어디를 클릭해도 선택"되게 하는
+   허용 오차 역할. pointer-events:stroke 라서 이 두꺼운 선의 영역 안에서만 반응한다. */
+.arrow-hit {
+  fill: none;
+  stroke: transparent;
+  stroke-width: 14;
+  pointer-events: stroke;
+  cursor: pointer;
+}
+
+/* 화살표 생성 모드에서 커서를 따라다니는 미리보기 선 */
+#arrow-draft {
+  fill: none;
+  stroke: var(--accent);
+  stroke-width: 2;
+  stroke-dasharray: 6 4;
+  pointer-events: none;
+}
+
+/* SVG 콘텐츠에는 [hidden]{display:none} 기본 UA 규칙이 안 먹는 경우가 있어서
+   (html.css 는 적용돼도 svg.css 쪽엔 없을 수 있다) 직접 명시해준다. */
+#arrow-draft[hidden] {
+  display: none;
 }
 
 /* ===== 메모 카드 ===== */
