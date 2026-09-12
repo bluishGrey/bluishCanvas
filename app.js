@@ -29,6 +29,8 @@ const sidebarOpenBtn = document.getElementById("sidebar-open-btn");
 const exportBtn = document.getElementById("export-btn");
 const importBtn = document.getElementById("import-btn");
 const importFileInput = document.getElementById("import-file-input");
+const lastExportInfoEl = document.getElementById("last-export-info");
+const lastImportInfoEl = document.getElementById("last-import-info");
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 const STORAGE_KEY = "bluishCanvas.v2";
@@ -81,6 +83,11 @@ let activePageId = null;
 let nextTreeId = 1;
 let selectedTreeIds = new Set(); // 사이드바에서 다중 선택된 페이지/폴더 id 들 (Ctrl/Shift+클릭)
 let treeSelectionAnchorId = null; // Shift+클릭 범위 선택의 기준점
+
+// 마지막 내보내기/가져오기 "한 건"만 기억한다 (전체 기록 목록이 아니다).
+// localStorage 에도 저장되고, 내보낸 JSON 파일 안에도 같이 담겨서 다른 컴퓨터로 옮겨가도
+// 이어진다 — export 데이터 자체가 "이 데이터가 마지막으로 언제 내보내졌는지"를 알고 있는 셈.
+let backupInfo = { lastExport: null, lastImport: null }; // { at: ISOString, filename } | null
 
 function createEmptyPageData() {
   return { view: { x: 0, y: 0, scale: 1 }, notes: [], arrows: [], nextId: 1, nextArrowId: 1 };
@@ -169,7 +176,7 @@ function save() {
     if (activePageId) pagesData[activePageId] = serializeCurrentPage();
     localStorage.setItem(
       STORAGE_KEY,
-      JSON.stringify({ tree, pages: pagesData, activePageId, nextTreeId })
+      JSON.stringify({ tree, pages: pagesData, activePageId, nextTreeId, backupInfo })
     );
   } catch (e) {
     console.warn("저장 실패:", e);
@@ -187,6 +194,9 @@ function load() {
       activePageId = data.activePageId;
       if (!activePageId || !pagesData[activePageId]) {
         activePageId = findFirstPageId(tree);
+      }
+      if (data.backupInfo && typeof data.backupInfo === "object") {
+        backupInfo = data.backupInfo;
       }
       Object.values(pagesData).forEach((p) => backfillNoteDefaults(p.notes || []));
       if (activePageId && pagesData[activePageId] && tree.length > 0) {
@@ -874,35 +884,81 @@ function uniqueNameAmong(siblings, desiredName) {
   return `${desiredName} ${i}`;
 }
 
+// ISO 문자열을 "2026-09-12 20:15" 형태로 짧게 표시한다.
+function formatDateTimeShort(isoString) {
+  const d = new Date(isoString);
+  return `${d.getFullYear()}-${pad2(d.getMonth() + 1)}-${pad2(d.getDate())} ${pad2(d.getHours())}:${pad2(d.getMinutes())}`;
+}
+
+// 폴더 안까지 재귀적으로 세서 { pages, folders } 개수를 구한다.
+function countTreeNodes(nodes) {
+  let pages = 0;
+  let folders = 0;
+  nodes.forEach((n) => {
+    if (n.type === "page") {
+      pages++;
+    } else {
+      folders++;
+      const sub = countTreeNodes(n.children || []);
+      pages += sub.pages;
+      folders += sub.folders;
+    }
+  });
+  return { pages, folders };
+}
+
+// 사이드바 하단의 "마지막 내보내기/가져오기" 표시를 갱신한다.
+function updateBackupInfoDisplay() {
+  lastExportInfoEl.textContent = backupInfo.lastExport
+    ? `마지막 내보내기: ${formatDateTimeShort(backupInfo.lastExport.at)}`
+    : "마지막 내보내기: 없음";
+  lastExportInfoEl.title = backupInfo.lastExport ? backupInfo.lastExport.filename : "";
+
+  lastImportInfoEl.textContent = backupInfo.lastImport
+    ? `마지막 가져오기: ${formatDateTimeShort(backupInfo.lastImport.at)}`
+    : "마지막 가져오기: 없음";
+  lastImportInfoEl.title = backupInfo.lastImport ? backupInfo.lastImport.filename : "";
+}
+
 function exportAllData() {
   // 지금 화면에 떠 있는 페이지의 실시간 상태부터 pagesData 에 반영해야, 그것도 같이 내보내진다.
   pagesData[activePageId] = serializeCurrentPage();
 
+  const now = new Date();
+  const stamp =
+    `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}` +
+    `_${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}`;
+  const filename = `bluishCanvas-backup-${stamp}.json`;
+
+  // 이 내보내기 자체를 "마지막 내보내기 기록"으로 남긴다 — 그래서 파일 안에도
+  // "이 데이터가 언제·어떤 이름으로 내보내졌는지"가 같이 담겨 다른 컴퓨터로 옮겨가도 이어진다.
+  backupInfo.lastExport = { at: now.toISOString(), filename };
+
   const data = {
     app: "bluishCanvas",
     exportVersion: 1,
-    exportedAt: new Date().toISOString(),
+    exportedAt: now.toISOString(),
     tree,
     pages: pagesData,
     activePageId,
+    backupInfo,
   };
 
   const json = JSON.stringify(data, null, 2);
   const blob = new Blob([json], { type: "application/json" });
   const url = URL.createObjectURL(blob);
 
-  const now = new Date();
-  const stamp =
-    `${now.getFullYear()}-${pad2(now.getMonth() + 1)}-${pad2(now.getDate())}` +
-    `_${pad2(now.getHours())}${pad2(now.getMinutes())}${pad2(now.getSeconds())}`;
-
   const a = document.createElement("a");
   a.href = url;
-  a.download = `bluishCanvas-backup-${stamp}.json`;
+  a.download = filename;
   document.body.appendChild(a);
   a.click();
   a.remove();
   URL.revokeObjectURL(url);
+
+  updateBackupInfoDisplay();
+  save();
+  alert(`내보내기 완료: ${filename}`);
 }
 
 // 가져온 트리 안의 모든 폴더/페이지 id를 지금 세션 기준으로 새로 발급한다. 다른 브라우저/
@@ -964,7 +1020,7 @@ function mergeImportedTree(importedTree) {
   });
 }
 
-function importBackup(data) {
+function importBackup(data, filename) {
   if (!data || !Array.isArray(data.tree) || !data.pages || typeof data.pages !== "object") {
     alert("올바른 백업 파일이 아닙니다.");
     return;
@@ -973,6 +1029,16 @@ function importBackup(data) {
     alert("백업 파일에 페이지가 없습니다.");
     return;
   }
+
+  // 몇 개를 가져왔는지 요약하려면 구조가 바뀌기(remap/merge) 전에 세어야 한다.
+  const importedCount = countTreeNodes(data.tree);
+
+  // 백업 파일 자체에 담겨 있던 "마지막 내보내기 기록"을 복원한다 — 다른 컴퓨터에서
+  // 이 파일을 받아 가져오기해도, 원래 언제·어떤 이름으로 내보내졌는지가 이어지도록.
+  if (data.backupInfo && data.backupInfo.lastExport) {
+    backupInfo.lastExport = data.backupInfo.lastExport;
+  }
+  backupInfo.lastImport = { at: new Date().toISOString(), filename: filename || "" };
 
   remapImportedIds(data.tree, data.pages);
   // 예전 버전 백업(도형/크기 필드가 없던 시절)을 가져와도 문제없도록 기본값을 채워준다.
@@ -998,8 +1064,13 @@ function importBackup(data) {
   }
 
   renderSidebar();
+  updateBackupInfoDisplay();
   save();
-  alert("가져오기를 완료했습니다.");
+
+  const parts = [];
+  if (importedCount.pages > 0) parts.push(`페이지 ${importedCount.pages}개`);
+  if (importedCount.folders > 0) parts.push(`폴더 ${importedCount.folders}개`);
+  alert(`가져오기 완료: ${parts.join(", ")}`);
 }
 
 exportBtn.addEventListener("click", exportAllData);
@@ -1010,10 +1081,11 @@ importFileInput.addEventListener("change", (e) => {
 
   const reader = new FileReader();
   reader.onload = () => {
+    const filename = file.name;
     importFileInput.value = ""; // 같은 파일을 다시 골라도 change 이벤트가 또 발생하도록
     try {
       const data = JSON.parse(reader.result);
-      importBackup(data);
+      importBackup(data, filename);
     } catch (err) {
       alert("파일을 읽는 중 문제가 발생했습니다. 올바른 JSON 파일인지 확인해주세요.");
     }
@@ -2112,4 +2184,5 @@ history = [{ notes: cloneNotes(), arrows: cloneArrows(), nextId, nextArrowId }];
 historyIndex = 0;
 
 renderSidebar();
+updateBackupInfoDisplay();
 save();

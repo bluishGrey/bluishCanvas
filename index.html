@@ -22,9 +22,15 @@
 
     <!-- 전체(모든 페이지/폴더) 내보내기 · 가져오기 -->
     <div id="sidebar-footer">
-      <button type="button" id="export-btn" class="sidebar-footer-btn" title="전체 폴더/페이지를 JSON 파일로 내보내기">⬇ 내보내기</button>
-      <button type="button" id="import-btn" class="sidebar-footer-btn" title="JSON 백업 파일 가져오기">⬆ 가져오기</button>
-      <input type="file" id="import-file-input" accept="application/json,.json" hidden />
+      <div id="backup-info">
+        <div id="last-export-info">마지막 내보내기: 없음</div>
+        <div id="last-import-info">마지막 가져오기: 없음</div>
+      </div>
+      <div id="sidebar-footer-buttons">
+        <button type="button" id="export-btn" class="sidebar-footer-btn" title="전체 폴더/페이지를 JSON 파일로 내보내기">⬇ 내보내기</button>
+        <button type="button" id="import-btn" class="sidebar-footer-btn" title="JSON 백업 파일 가져오기">⬆ 가져오기</button>
+        <input type="file" id="import-file-input" accept="application/json,.json" hidden />
+      </div>
     </div>
   </div>
 

@@ -473,10 +473,25 @@ body {
 
 #sidebar-footer {
   display: flex;
-  gap: 4px;
+  flex-direction: column;
+  gap: 6px;
   padding: 8px;
   border-top: 1px solid var(--note-border);
   flex-shrink: 0;
+}
+
+#backup-info {
+  font-size: 11px;
+  line-height: 1.5;
+  color: #9aa7bd;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+#sidebar-footer-buttons {
+  display: flex;
+  gap: 4px;
 }
 
 .sidebar-footer-btn {
