@@ -18,6 +18,9 @@
       <button type="button" id="add-page-btn" class="tree-icon-btn" title="새 페이지">＋▭</button>
       <button type="button" id="add-folder-btn" class="tree-icon-btn" title="새 폴더">＋▤</button>
     </div>
+    <div id="sidebar-search-row">
+      <input type="search" id="sidebar-search-input" placeholder="페이지/폴더 검색" />
+    </div>
     <div id="page-tree"></div>
 
     <!-- 메모 꾸미기 패널: 메모(들)를 선택하면 배경색/텍스트크기/정렬/테두리굵기를 바로 조절 -->
@@ -110,6 +113,13 @@
     </div>
   </div>
 
+  <!-- Ctrl+F 로 열리는 캔버스(현재 페이지) 메모 텍스트 검색창 -->
+  <div id="canvas-search" hidden>
+    <input type="text" id="canvas-search-input" placeholder="메모 검색..." />
+    <span id="canvas-search-count"></span>
+    <button type="button" id="canvas-search-close" aria-label="검색창 닫기">×</button>
+  </div>
+
   <div id="toolbar">
     <span id="next-shape-label">사각형</span>
     <span id="zoom-label">100%</span>
@@ -135,7 +145,9 @@
     <b>Ctrl+B</b> → 사이드바 접기/펼치기 &nbsp;·&nbsp;
     사이드바: 페이지/폴더 <b>더블클릭</b> 또는 펜 아이콘 → 이름 변경, 페이지를 폴더 위로 <b>드래그</b> → 이동,
     <b>Ctrl/Shift+클릭</b> → 다중 선택, 하단 <b>내보내기/가져오기</b> → 전체 백업 &nbsp;·&nbsp;
-    메모 선택 시 사이드바 <b>꾸미기</b> 패널 → 배경색/텍스트크기/정렬/테두리굵기 조절
+    메모 선택 시 사이드바 <b>꾸미기</b> 패널 → 배경색/텍스트크기/정렬/테두리굵기 조절 &nbsp;·&nbsp;
+    사이드바 상단 검색창 → 페이지/폴더 검색 &nbsp;·&nbsp;
+    <b>Ctrl+F</b> → 현재 페이지 메모 검색(<b>Enter</b> 다음 결과, <b>Esc</b> 닫기)
   </div>
 
   <!-- 빈 곳 우클릭 시 뜨는 퀵메뉴: 메모 추가 + 다음 생성 도형 전환 -->

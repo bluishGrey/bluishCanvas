@@ -33,6 +33,11 @@ const lastExportInfoEl = document.getElementById("last-export-info");
 const lastImportInfoEl = document.getElementById("last-import-info");
 const stylePanelEmptyEl = document.getElementById("style-panel-empty");
 const stylePanelBodyEl = document.getElementById("style-panel-body");
+const sidebarSearchInput = document.getElementById("sidebar-search-input");
+const canvasSearchEl = document.getElementById("canvas-search");
+const canvasSearchInput = document.getElementById("canvas-search-input");
+const canvasSearchCountEl = document.getElementById("canvas-search-count");
+const canvasSearchCloseBtn = document.getElementById("canvas-search-close");
 const SVG_NS = "http://www.w3.org/2000/svg";
 
 const STORAGE_KEY = "bluishCanvas.v2";
@@ -93,6 +98,7 @@ let activePageId = null;
 let nextTreeId = 1;
 let selectedTreeIds = new Set(); // 사이드바에서 다중 선택된 페이지/폴더 id 들 (Ctrl/Shift+클릭)
 let treeSelectionAnchorId = null; // Shift+클릭 범위 선택의 기준점
+let sidebarSearchQuery = ""; // 소문자로 다듬어진 사이드바 검색어. 비어있으면 필터링 안 함
 
 // 마지막 내보내기/가져오기 "한 건"만 기억한다 (전체 기록 목록이 아니다).
 // localStorage 에도 저장되고, 내보낸 JSON 파일 안에도 같이 담겨서 다른 컴퓨터로 옮겨가도
@@ -276,6 +282,7 @@ function restoreSnapshot(snapshot) {
   arrows.forEach(renderArrow);
   updateHandles();
   updateStylePanel();
+  closeCanvasSearch(); // notes 를 통째로 다시 그렸으니, 남아있던 검색 하이라이트/결과는 무효
   save();
   isRestoringHistory = false;
 }
@@ -310,6 +317,7 @@ function loadPageIntoGlobals(pageData) {
   selectedArrowIds = new Set();
   cancelArrowDraft();
   closeQuickMenu();
+  closeCanvasSearch(); // 검색은 "현재 페이지 안"으로 범위가 한정되므로, 페이지가 바뀌면 닫는다
 
   notes.forEach(renderNote);
   arrows.forEach(renderArrow);
@@ -668,8 +676,20 @@ function handleTreeDrop(e, targetId, zone) {
   moveTreeNodes(draggedIds, targetId, zone);
 }
 
+// 폴더/페이지 이름이 검색어를 포함하면 true. 폴더는 자신의 이름이 아니어도
+// 자손 중 하나라도 일치하면 true (검색 중엔 "일치하는 게 들어있는 폴더"까지 보여야 하므로).
+function nodeMatchesSearch(node, query) {
+  if (node.name.toLowerCase().includes(query)) return true;
+  if (node.type === "folder") {
+    return (node.children || []).some((c) => nodeMatchesSearch(c, query));
+  }
+  return false;
+}
+
 function renderTreeNodes(nodes, container, depth) {
-  nodes.forEach((node) => {
+  const query = sidebarSearchQuery;
+  const visibleNodes = query ? nodes.filter((n) => nodeMatchesSearch(n, query)) : nodes;
+  visibleNodes.forEach((node) => {
     const row = document.createElement("div");
     row.className = "tree-row";
     row.style.paddingLeft = `${depth * 16 + 6}px`;
@@ -681,7 +701,10 @@ function renderTreeNodes(nodes, container, depth) {
       row.classList.add("tree-folder");
       const caret = document.createElement("span");
       caret.className = "tree-caret";
-      caret.textContent = node.expanded ? "▾" : "▸";
+      // 검색 중에는(일치하는 자손을 보여줘야 하므로) 실제 expanded 값과 상관없이 펼친
+      // 것처럼 보여준다 — 다만 node.expanded 자체는 건드리지 않아서, 검색어를 지우면
+      // 검색 전 접힘/펼침 상태로 그대로 돌아온다.
+      caret.textContent = node.expanded || query ? "▾" : "▸";
       caret.addEventListener("click", (e) => {
         e.stopPropagation();
         node.expanded = !node.expanded;
@@ -819,7 +842,7 @@ function renderTreeNodes(nodes, container, depth) {
 
     container.appendChild(row);
 
-    if (node.type === "folder" && node.expanded) {
+    if (node.type === "folder" && (node.expanded || query)) {
       renderTreeNodes(node.children || [], container, depth + 1);
     }
   });
@@ -854,6 +877,11 @@ pageTreeEl.addEventListener("click", (e) => {
 
 addPageBtn.addEventListener("click", () => createPage(null));
 addFolderBtn.addEventListener("click", () => createFolder(null));
+
+sidebarSearchInput.addEventListener("input", () => {
+  sidebarSearchQuery = sidebarSearchInput.value.trim().toLowerCase();
+  renderSidebar();
+});
 
 /* ===== 사이드바: 꾸미기 패널 ===== */
 
@@ -2460,6 +2488,120 @@ document.addEventListener("keydown", (e) => {
   const shapeByKey = { 1: "rect", 2: "ellipse", 3: "diamond" };
   setNextShape(shapeByKey[e.key]);
 });
+
+/* ===== 캔버스(현재 페이지) 메모 검색 (Ctrl+F) ===== */
+
+let canvasSearchMatches = []; // 현재 검색어와 일치하는 메모 id 목록 (notes 순서 그대로)
+let canvasSearchIndex = -1; // canvasSearchMatches 안에서 지금 보고 있는 위치
+
+// 메모의 중심이 캔버스 뷰포트 한가운데 오도록 화면을 이동한다 (줌 배율은 그대로 둔다).
+function panToNote(note) {
+  const canvasRect = canvas.getBoundingClientRect();
+  const centerWorld = { x: note.x + note.w / 2, y: note.y + note.h / 2 };
+  view.x = canvasRect.width / 2 - centerWorld.x * view.scale;
+  view.y = canvasRect.height / 2 - centerWorld.y * view.scale;
+  applyTransform();
+  save();
+}
+
+function clearCanvasSearchHighlights() {
+  world.querySelectorAll(".note.search-match, .note.search-current").forEach((el) => {
+    el.classList.remove("search-match", "search-current");
+  });
+}
+
+function updateCanvasSearchCount() {
+  if (canvasSearchMatches.length === 0) {
+    canvasSearchCountEl.textContent = canvasSearchInput.value ? "0/0" : "";
+  } else {
+    canvasSearchCountEl.textContent = `${canvasSearchIndex + 1}/${canvasSearchMatches.length}`;
+  }
+}
+
+// 검색어와 일치하는 메모를 다시 찾아 전부 하이라이트하고, 그 중 첫 번째로 이동한다.
+function performCanvasSearch(query) {
+  clearCanvasSearchHighlights();
+  const q = query.trim().toLowerCase();
+  canvasSearchMatches = q ? notes.filter((n) => (n.text || "").toLowerCase().includes(q)).map((n) => n.id) : [];
+  canvasSearchIndex = -1;
+
+  canvasSearchMatches.forEach((id) => {
+    const el = noteEl(id);
+    if (el) el.classList.add("search-match");
+  });
+
+  if (canvasSearchMatches.length > 0) {
+    goToSearchMatch(0);
+  } else {
+    updateCanvasSearchCount();
+  }
+}
+
+// index 번째 일치 결과를 "현재 결과"로 표시하고 그 메모로 화면을 이동한다.
+// index 는 범위를 벗어나도(음수 포함) 순환하도록 나머지 연산으로 보정한다.
+function goToSearchMatch(index) {
+  if (canvasSearchMatches.length === 0) return;
+  if (canvasSearchIndex >= 0) {
+    const prevEl = noteEl(canvasSearchMatches[canvasSearchIndex]);
+    if (prevEl) prevEl.classList.remove("search-current");
+  }
+  canvasSearchIndex = ((index % canvasSearchMatches.length) + canvasSearchMatches.length) % canvasSearchMatches.length;
+
+  const id = canvasSearchMatches[canvasSearchIndex];
+  const el = noteEl(id);
+  if (el) el.classList.add("search-current");
+  const note = getNote(id);
+  if (note) panToNote(note);
+  updateCanvasSearchCount();
+}
+
+function nextSearchMatch() {
+  goToSearchMatch(canvasSearchIndex + 1);
+}
+
+function prevSearchMatch() {
+  goToSearchMatch(canvasSearchIndex - 1);
+}
+
+function openCanvasSearch() {
+  canvasSearchEl.hidden = false;
+  canvasSearchInput.focus();
+  canvasSearchInput.select();
+  if (canvasSearchInput.value) performCanvasSearch(canvasSearchInput.value);
+}
+
+function closeCanvasSearch() {
+  canvasSearchEl.hidden = true;
+  clearCanvasSearchHighlights();
+  canvasSearchMatches = [];
+  canvasSearchIndex = -1;
+  canvasSearchInput.value = "";
+  canvasSearchCountEl.textContent = "";
+}
+
+// 브라우저 기본 Ctrl+F(페이지 내 찾기)를 막고 대신 이 캔버스 검색창을 연다.
+// isContentEditable/INPUT 여부와 상관없이 항상 가로챈다 — 그래야 메모 편집 중이거나
+// 사이드바 입력칸에 포커스가 있어도 브라우저 기본 찾기가 뜨지 않는다.
+document.addEventListener("keydown", (e) => {
+  if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "f") {
+    e.preventDefault();
+    openCanvasSearch();
+  }
+});
+
+canvasSearchInput.addEventListener("input", () => performCanvasSearch(canvasSearchInput.value));
+canvasSearchInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    e.preventDefault();
+    if (e.shiftKey) prevSearchMatch();
+    else nextSearchMatch();
+  } else if (e.key === "Escape") {
+    e.preventDefault();
+    closeCanvasSearch();
+  }
+  e.stopPropagation(); // Delete/1·2·3/Ctrl+Z 등 다른 전역 단축키로 새지 않게
+});
+canvasSearchCloseBtn.addEventListener("click", closeCanvasSearch);
 
 /* ===== 시작 ===== */
 

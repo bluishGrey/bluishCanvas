@@ -440,6 +440,71 @@ body {
   color: var(--text);
 }
 
+/* ===== 캔버스(현재 페이지) 메모 검색 (Ctrl+F) ===== */
+#canvas-search {
+  position: fixed;
+  top: 14px;
+  /* #hint 와 같은 방식: 화면 전체가 아니라 사이드바를 뺀 캔버스 영역 안에서 가운데. */
+  left: calc(var(--sidebar-w) + (100% - var(--sidebar-w)) / 2);
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 6px 8px;
+  background: #fff;
+  border: 1px solid var(--note-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(31, 39, 51, 0.18);
+  z-index: 20;
+}
+
+#canvas-search[hidden] {
+  display: none;
+}
+
+#canvas-search-input {
+  border: none;
+  outline: none;
+  font: inherit;
+  font-size: 13px;
+  width: 200px;
+}
+
+#canvas-search-count {
+  font-size: 12px;
+  color: #9aa7bd;
+  min-width: 34px;
+  text-align: center;
+}
+
+#canvas-search-close {
+  border: none;
+  background: none;
+  color: #9aa7bd;
+  font-size: 16px;
+  line-height: 1;
+  padding: 0 2px;
+  cursor: pointer;
+}
+
+#canvas-search-close:hover {
+  color: var(--accent);
+}
+
+/* 검색 결과 하이라이트. .note-shape 가 아니라 .note(바깥 사각형 박스) 자체에 outline 을
+   주는 이유: 원/마름모는 .note-shape 에 clip-path 가 걸려 있어서 outline/border 를
+   거기 주면 도형 모양대로 잘려 삐죽하게 보이거나 아예 안 보인다(이전 진단모 테두리
+   버그와 같은 원인). .note 자체는 clip-path 가 없는 순수 사각형이라 항상 온전하게 보인다. */
+.note.search-match {
+  outline: 2px solid #f5a623;
+  outline-offset: 3px;
+}
+
+.note.search-current {
+  outline: 3px solid #f5a623;
+  outline-offset: 3px;
+}
+
 /* ===== 빈 곳 우클릭 퀵메뉴 ===== */
 #quick-menu {
   position: fixed;
@@ -516,6 +581,27 @@ body {
   flex: 1;
   font-weight: 600;
   padding-left: 4px;
+}
+
+#sidebar-search-row {
+  padding: 8px;
+  border-bottom: 1px solid var(--note-border);
+  flex-shrink: 0;
+}
+
+#sidebar-search-input {
+  width: 100%;
+  box-sizing: border-box;
+  border: 1px solid var(--note-border);
+  border-radius: 6px;
+  padding: 5px 8px;
+  font: inherit;
+  font-size: 12.5px;
+  outline: none;
+}
+
+#sidebar-search-input:focus {
+  border-color: var(--accent);
 }
 
 #page-tree {
