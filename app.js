@@ -15,7 +15,6 @@ const selectionBoxEl = document.getElementById("selection-box");
 const selectionOutlineEl = document.getElementById("selection-outline");
 const resizeHandlesEl = document.getElementById("resize-handles");
 const quickMenuEl = document.getElementById("quick-menu");
-const nextShapeLabelEl = document.getElementById("next-shape-label");
 const zoomLabel = document.getElementById("zoom-label");
 const resetBtn = document.getElementById("reset-view");
 const arrowsLayerEl = document.getElementById("arrows-layer");
@@ -53,7 +52,7 @@ const DEFAULT_NOTE_W = 170;
 const DEFAULT_NOTE_H = 70;
 const MIN_NOTE_SIZE = 60; // 메모가 이보다 작게 줄어들지는 않는다
 const DEFAULT_SHAPE = "rect";
-const SHAPE_LABELS = { rect: "사각형(1)", ellipse: "원(2)", diamond: "마름모(3)" };
+const SHAPE_LABELS = { rect: "사각형", ellipse: "원", diamond: "마름모" }; // "알려진 도형인지" 확인용
 
 // 메모 꾸미기(사이드바 "꾸미기" 패널)의 기본값. 기존 메모(이 필드들이 아직 없는 데이터)를
 // backfillNoteDefaults 로 채울 때도 이 값들을 쓰므로, 꾸미기 기능이 생기기 전 메모의
@@ -2177,9 +2176,8 @@ function makeNoteInteractive(el, note, textEl) {
 /* ===== 도형 선택(다음 생성 도형) & 빈 곳 우클릭 퀵메뉴 ===== */
 
 function setNextShape(shape) {
-  if (!SHAPE_LABELS[shape]) return;
+  if (!SHAPE_LABELS[shape]) return; // 알려진 도형인지 확인하는 용도로만 SHAPE_LABELS 를 쓴다
   nextShape = shape;
-  nextShapeLabelEl.textContent = SHAPE_LABELS[shape];
   updateShapeUIHighlight();
 }
 

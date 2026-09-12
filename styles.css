@@ -394,12 +394,6 @@ body {
   backdrop-filter: blur(4px);
 }
 
-#next-shape-label {
-  padding: 2px 8px;
-  border-right: 1px solid var(--note-border);
-  color: #55617a;
-}
-
 #zoom-label {
   min-width: 42px;
   text-align: center;
