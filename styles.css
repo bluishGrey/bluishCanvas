@@ -105,6 +105,22 @@ body {
   cursor: grabbing;
 }
 
+/* 선택 시 사각형/원은 box-shadow 의 spread(0 0 0 2px)로 또렷한 "링"을 두르는데,
+   마름모는 clip-path 때문에 box-shadow spread 를 쓸 수 없다. 그래서 .note-shape
+   보다 먼저(=뒤에) 그려지는 별도 레이어를 하나 두고, 마름모+선택 상태에서만
+   그 레이어를 살짝 더 크게(inset:-2px) 만들어 강조색으로 채워서 "링"처럼 보이게 한다. */
+.note-ring {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+.note.selected[data-shape="diamond"] .note-ring {
+  inset: -2px;
+  background: rgba(59, 111, 212, 0.35);
+  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+}
+
 /* 배경/테두리/그림자는 별도 레이어(.note-shape)가 맡는다. 마름모는 clip-path 로 모양을
    잘라내는데, 이걸 .note 자체에 걸면 안쪽 텍스트/삭제버튼까지 같이 잘려나가기 때문이다. */
 .note-shape {
@@ -160,12 +176,11 @@ body {
 }
 
 /* 마름모가 선택됐을 때는 border-color 가 아니라, "테두리 역할"을 하는
-   바깥쪽 배경색 자체를 강조색으로 바꿔야 파란 테두리처럼 보인다. drop-shadow 는
-   box-shadow 의 spread(0 0 0 2px) 같은 "테두리 링" 표현을 못 하므로, 대신
-   작은 번짐의 강조색 그림자를 겹쳐서 비슷한 느낌을 낸다. */
+   바깥쪽 배경색 자체를 강조색으로 바꿔야 파란 테두리처럼 보인다.
+   또렷한 링은 위의 .note-ring 이 담당하고, 여기서는 은은한 그림자만 유지한다. */
 .note.selected[data-shape="diamond"] .note-shape {
   background: var(--accent);
-  filter: drop-shadow(0 0 3px rgba(59, 111, 212, 0.7)) drop-shadow(0 4px 14px rgba(31, 39, 51, 0.12));
+  filter: drop-shadow(0 4px 14px rgba(31, 39, 51, 0.12));
 }
 
 /* 메모에 마우스를 올렸을 때만 보이는 삭제 버튼.

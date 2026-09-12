@@ -443,6 +443,12 @@ function renderNote(note) {
   el.style.width = `${note.w}px`;
   el.style.height = `${note.h}px`;
 
+  // 선택 시 강조 "링" 전용 레이어 (.note-shape 보다 먼저 그려져 뒤에 깔린다).
+  // 마름모는 clip-path 때문에 box-shadow 링을 못 써서 이 레이어로 대신 흉내낸다.
+  const ringEl = document.createElement("div");
+  ringEl.className = "note-ring";
+  el.appendChild(ringEl);
+
   // 배경/테두리/그림자 전용 레이어. 텍스트/삭제버튼은 여기 안 들어있어서
   // 마름모의 clip-path 에 같이 잘려나가지 않는다.
   const shapeEl = document.createElement("div");
