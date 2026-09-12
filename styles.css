@@ -177,9 +177,11 @@ body {
   fill: var(--accent);
 }
 
-.arrow.selected .arrow-label-text {
-  fill: var(--accent);
-}
+/* .arrow-label-text 는 선택 여부와 상관없이 항상 거의 흰색을 유지한다 — 배경이
+   짙은 남색(평소)이든 accent 파란색(선택 시)이든 둘 다 어두운 색이라 밝은
+   텍스트와 대비가 유지된다. (이전 다크 스타일 이전에 쓰던 "선택 시 텍스트도
+   accent색으로" 규칙이 남아있으면, 선택된 배경과 텍스트가 같은 색이 되어
+   글씨가 안 보이는 버그가 생긴다.) */
 
 .arrow-label-bg[hidden],
 .arrow-label-text[hidden] {
