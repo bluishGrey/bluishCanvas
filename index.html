@@ -91,6 +91,9 @@
   <div id="canvas">
     <!-- 모든 메모가 들어가는 무한 평면. transform 으로 통째로 움직인다. -->
     <div id="world">
+      <!-- 올가미로 묶은 그룹을 감싸는 옅은 박스. #world 의 맨 앞 자식이라 화살표/메모보다
+           뒤에 깔린다. 여기도 월드 좌표계라 팬/줌은 저절로 따라간다. -->
+      <div id="groups-layer"></div>
       <!-- 메모 사이 화살표. #world 안에 있어서 팬/줌 transform 을 메모와 똑같이 그대로 받는다
            (즉 좌표를 월드 단위로만 계산하면 되고, 팬/줌 때마다 따로 갱신할 필요가 없다). -->
       <svg id="arrows-layer">
@@ -108,6 +111,11 @@
     </div>
     <!-- 빈 곳 좌클릭 드래그 시 나타나는 사각형 다중 선택 영역 (화면 좌표 기준) -->
     <div id="selection-box" hidden></div>
+    <!-- 올가미 모드에서 드래그하는 동안 그려지는 자유곡선 경로 (화면 좌표 기준).
+         비어 있을 땐 points 를 비워두면 아무것도 안 그려지므로 따로 숨기지 않는다. -->
+    <svg id="lasso-layer">
+      <polyline id="lasso-path" points=""></polyline>
+    </svg>
     <!-- 선택된 메모(들)의 실제 경계 상자를 그대로 보여주는 점선 테두리 (화면 좌표 기준).
          원/마름모는 도형 모양 때문에 경계 상자 모서리가 비어 보이는데, 이 테두리가
          핸들/삭제버튼이 어떤 사각형을 기준으로 위치하는지 눈에 보이게 해준다. -->
@@ -140,6 +148,7 @@
       <button type="button" class="diagram-type-btn" data-diagram-type="flowchart" title="플로우차트 (Tab으로 전환)">플로우차트</button>
       <button type="button" class="diagram-type-btn" data-diagram-type="mindmap" title="마인드맵 (Tab으로 전환)">마인드맵</button>
     </div>
+    <button type="button" id="lasso-btn" title="올가미로 그룹 묶기 (L)">◌ 올가미</button>
     <button type="button" id="canvas-search-btn" title="메모 검색 (Ctrl+F)">🔍</button>
     <span id="zoom-label">100%</span>
     <button id="reset-view" type="button">화면 초기화</button>

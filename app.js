@@ -38,6 +38,9 @@ const canvasSearchInput = document.getElementById("canvas-search-input");
 const canvasSearchCountEl = document.getElementById("canvas-search-count");
 const canvasSearchCloseBtn = document.getElementById("canvas-search-close");
 const canvasSearchBtn = document.getElementById("canvas-search-btn");
+const lassoBtn = document.getElementById("lasso-btn");
+const lassoPathEl = document.getElementById("lasso-path");
+const groupsLayerEl = document.getElementById("groups-layer");
 const helpBtn = document.getElementById("help-btn");
 const helpPopup = document.getElementById("help-popup");
 const helpCloseBtn = document.getElementById("help-close-btn");
@@ -304,6 +307,7 @@ function applySnapshot(snapshot) {
 
   notes.forEach(renderNote);
   arrows.forEach(renderArrow);
+  renderGroups();
 }
 
 // 지금까지의 변경을 히스토리 한 칸으로 확정한다. (생성/이동/삭제/텍스트 수정 완료 시점에 호출)
@@ -1658,6 +1662,7 @@ function deleteSelectedObjects() {
   if (selectedIds.size === 0 && selectedArrowIds.size === 0) return;
   Array.from(selectedIds).forEach(removeNoteFromState); // 메모에 딸린 화살표도 같이 지워진다
   Array.from(selectedArrowIds).forEach(removeArrowFromState);
+  renderGroups(); // 지운 메모가 그룹에서 빠졌으니 박스를 다시 그린다
   commitChange();
 }
 
@@ -1895,6 +1900,7 @@ function initResizeHandles() {
 
         updateHandles();
         updateAllArrowGeometry();
+        updateGroupBoxGeometry();
       };
 
       const onUp = () => {
@@ -1951,6 +1957,7 @@ function removeNoteFromState(id) {
 
 function deleteNote(id) {
   removeNoteFromState(id);
+  renderGroups(); // 지운 메모가 그룹에서 빠졌으니 박스를 다시 그린다
   commitChange();
 }
 
@@ -1980,6 +1987,205 @@ function removeNoteFromItsGroup(noteId) {
   if (group.noteIds.length === 0) {
     groups = groups.filter((g) => g.id !== group.id);
   }
+}
+
+/* 올가미로 잡은 도형들을 그룹으로 만든다.
+ * 타입이 섞여 있으면 타입별로 나눠서 그룹을 여러 개 만든다 — 하나로 합치면 사용자가
+ * 명시적으로 지정해둔 타입을 몰래 바꾸게 되기 때문. 다만 "미지정"은 명시적 선택이 아니라
+ * 아직 안 정한 상태이므로, 멤버가 더 많은 쪽에 흡수시키면서 그 타입을 부여한다
+ * (동수이거나 타입이 지정된 도형이 하나도 없으면 현재 선택된 nextDiagramType 을 쓴다). */
+function createGroupsFromNoteIds(noteIds) {
+  const buckets = { flowchart: [], mindmap: [] };
+  const unsetIds = [];
+
+  noteIds.forEach((id) => {
+    const note = getNote(id);
+    if (!note) return;
+    if (note.diagramType === "flowchart" || note.diagramType === "mindmap") {
+      buckets[note.diagramType].push(id);
+    } else {
+      unsetIds.push(id);
+    }
+  });
+
+  if (unsetIds.length > 0) {
+    let host;
+    if (buckets.flowchart.length > buckets.mindmap.length) host = "flowchart";
+    else if (buckets.mindmap.length > buckets.flowchart.length) host = "mindmap";
+    else host = nextDiagramType;
+
+    unsetIds.forEach((id) => {
+      const note = getNote(id);
+      if (note) note.diagramType = host;
+      buckets[host].push(id);
+    });
+  }
+
+  const created = [];
+  ["flowchart", "mindmap"].forEach((type) => {
+    const ids = buckets[type];
+    if (ids.length === 0) return;
+    // 중첩은 없다: 이미 다른 그룹에 속해 있었다면 거기서 빼고 새 그룹으로 옮긴다.
+    ids.forEach(removeNoteFromItsGroup);
+    const gid = nextGroupId++;
+    const group = { id: `g${gid}`, name: `그룹 ${gid}`, noteIds: ids };
+    groups.push(group);
+    created.push(group);
+  });
+  return created;
+}
+
+// 다각형(월드 좌표) 안에 점이 들어있는지 — ray casting.
+function isPointInPolygon(point, polygon) {
+  let inside = false;
+  for (let i = 0, j = polygon.length - 1; i < polygon.length; j = i++) {
+    const xi = polygon[i].x;
+    const yi = polygon[i].y;
+    const xj = polygon[j].x;
+    const yj = polygon[j].y;
+    const intersects =
+      yi > point.y !== yj > point.y &&
+      point.x < ((xj - xi) * (point.y - yi)) / (yj - yi) + xi;
+    if (intersects) inside = !inside;
+  }
+  return inside;
+}
+
+// 올가미 경로(월드 좌표) 안에 "중심점"이 들어오는 메모들. 화살표 영역 선택이 이미
+// 중앙점 기준이라 규칙을 똑같이 맞춘다.
+function notesInsidePolygon(polygon) {
+  return notes
+    .filter((n) => isPointInPolygon({ x: n.x + n.w / 2, y: n.y + n.h / 2 }, polygon))
+    .map((n) => n.id);
+}
+
+/* ===== 그룹 시각화 (월드 좌표 박스) ===== */
+
+const GROUP_BOX_PADDING = 18;
+
+// 멤버 메모들을 감싸는 월드 좌표 경계 상자. 멤버가 하나도 남아있지 않으면 null.
+function groupBounds(group) {
+  const members = group.noteIds.map(getNote).filter(Boolean);
+  if (members.length === 0) return null;
+  const left = Math.min(...members.map((n) => n.x));
+  const top = Math.min(...members.map((n) => n.y));
+  const right = Math.max(...members.map((n) => n.x + n.w));
+  const bottom = Math.max(...members.map((n) => n.y + n.h));
+  return {
+    x: left - GROUP_BOX_PADDING,
+    y: top - GROUP_BOX_PADDING,
+    w: right - left + GROUP_BOX_PADDING * 2,
+    h: bottom - top + GROUP_BOX_PADDING * 2,
+  };
+}
+
+function applyGroupBoxBounds(box, bounds) {
+  box.style.left = `${bounds.x}px`;
+  box.style.top = `${bounds.y}px`;
+  box.style.width = `${bounds.w}px`;
+  box.style.height = `${bounds.h}px`;
+}
+
+// 드래그/리사이즈 중에는 박스를 다시 만들지 않고 위치·크기만 고친다. 매 프레임 DOM 을
+// 통째로 새로 만들면 낭비인데다, 이름을 고치는 중이던 입력칸까지 날아간다
+// (사이드바에서 renderSidebar 대신 가벼운 갱신을 쓰는 것과 같은 이유).
+function updateGroupBoxGeometry() {
+  groupsLayerEl.querySelectorAll(".group-box").forEach((box) => {
+    const group = getGroup(box.dataset.id);
+    if (!group) return;
+    const bounds = groupBounds(group);
+    if (bounds) applyGroupBoxBounds(box, bounds);
+  });
+}
+
+// 그룹 박스를 전부 다시 만든다. 그룹이 생기거나 없어지거나 이름/타입이 바뀔 때처럼
+// 구조가 실제로 달라졌을 때만 쓴다.
+function renderGroups() {
+  groupsLayerEl.innerHTML = "";
+  groups.forEach((group) => {
+    const bounds = groupBounds(group);
+    if (!bounds) return;
+
+    const box = document.createElement("div");
+    box.className = "group-box";
+    box.dataset.id = group.id;
+    box.dataset.diagramType = groupDiagramType(group) || "none";
+    applyGroupBoxBounds(box, bounds);
+
+    const label = document.createElement("div");
+    label.className = "group-label";
+
+    const nameEl = document.createElement("span");
+    nameEl.className = "group-name";
+    nameEl.textContent = group.name;
+    nameEl.addEventListener("dblclick", (e) => {
+      e.stopPropagation();
+      startGroupRenaming(nameEl, group);
+    });
+    label.appendChild(nameEl);
+
+    const ungroupBtn = document.createElement("button");
+    ungroupBtn.type = "button";
+    ungroupBtn.className = "group-ungroup-btn";
+    ungroupBtn.title = "그룹 해제";
+    ungroupBtn.textContent = "×";
+    ungroupBtn.addEventListener("mousedown", (e) => e.stopPropagation());
+    ungroupBtn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      ungroup(group.id);
+    });
+    label.appendChild(ungroupBtn);
+
+    box.appendChild(label);
+    groupsLayerEl.appendChild(box);
+  });
+}
+
+// 그룹만 없애고 도형은 그대로 둔다(도형의 다이어그램 타입도 유지).
+function ungroup(groupId) {
+  groups = groups.filter((g) => g.id !== groupId);
+  renderGroups();
+  commitChange();
+}
+
+// 그룹 이름 바꾸기 — 사이드바 이름 변경과 같은 방식(Enter 저장 / Esc 취소 / 포커스 잃으면 저장).
+function startGroupRenaming(nameEl, group) {
+  const input = document.createElement("input");
+  input.type = "text";
+  input.className = "group-name-input";
+  input.value = group.name;
+  nameEl.replaceWith(input);
+  input.focus();
+  input.select();
+
+  let done = false;
+  const commit = () => {
+    if (done) return;
+    done = true;
+    group.name = input.value.trim() || group.name;
+    renderGroups();
+    commitChange();
+  };
+  const cancel = () => {
+    if (done) return;
+    done = true;
+    renderGroups();
+  };
+
+  input.addEventListener("mousedown", (e) => e.stopPropagation());
+  input.addEventListener("click", (e) => e.stopPropagation());
+  input.addEventListener("keydown", (e) => {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      commit();
+    } else if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      cancel();
+    }
+  });
+  input.addEventListener("blur", commit);
 }
 
 /* ===== 메모 꾸미기 (사이드바 "꾸미기" 패널) =====
@@ -2037,6 +2243,7 @@ function applyStyleToSelection(field, value) {
     note[field] = value;
     updateNoteStyleDOM(note);
   });
+  if (field === "diagramType") renderGroups(); // 그룹 박스 색이 타입을 따라가므로 다시 그린다
   updateStylePanel();
   commitChange();
 }
@@ -2224,6 +2431,7 @@ function makeNoteInteractive(el, note, textEl) {
       });
       updateHandles();
       updateAllArrowGeometry();
+      updateGroupBoxGeometry();
     };
 
     const onUp = () => {
@@ -2400,11 +2608,73 @@ canvas.addEventListener("mousedown", (e) => {
   document.addEventListener("mouseup", onUp);
 });
 
+/* ===== 올가미(라쏘): 자유곡선으로 감싼 도형들을 그룹으로 묶기 =====
+ * 올가미 모드일 때만 빈 곳 드래그가 "사각형 영역 선택" 대신 자유곡선 그리기가 된다.
+ * 평소 모드의 영역 선택 동작은 전혀 건드리지 않는다(아래 핸들러 맨 앞의 early return). */
+
+let lassoMode = false;
+
+function setLassoMode(on) {
+  lassoMode = on;
+  canvas.classList.toggle("lasso", on);
+  lassoBtn.classList.toggle("active", on);
+  if (!on) lassoPathEl.setAttribute("points", "");
+}
+
+lassoBtn.addEventListener("click", () => setLassoMode(!lassoMode));
+
+canvas.addEventListener("mousedown", (e) => {
+  if (!lassoMode) return;
+  if (arrowDraft) return;
+  if (e.button !== 0 || e.ctrlKey) return;
+  if (e.target !== canvas) return; // 메모 위에서 시작한 드래그는 메모 쪽 핸들러가 처리
+
+  e.preventDefault();
+  const canvasRect = canvas.getBoundingClientRect();
+  const points = [{ x: e.clientX, y: e.clientY }]; // 뷰포트 기준으로 모으고, 그릴 때만 보정한다
+
+  const draw = () => {
+    // #lasso-layer 는 #canvas 안에 있으므로 캔버스 자신의 오프셋을 빼야 한다
+    // (사이드바 때문에 #canvas 가 화면 왼쪽 끝이 아니다 — selection-box 와 같은 이유).
+    lassoPathEl.setAttribute(
+      "points",
+      points.map((p) => `${p.x - canvasRect.left},${p.y - canvasRect.top}`).join(" ")
+    );
+  };
+
+  const onMove = (ev) => {
+    points.push({ x: ev.clientX, y: ev.clientY });
+    draw();
+  };
+
+  const onUp = () => {
+    document.removeEventListener("mousemove", onMove);
+    document.removeEventListener("mouseup", onUp);
+    lassoPathEl.setAttribute("points", "");
+
+    if (points.length < 3) return; // 사실상 클릭이면 아무것도 하지 않는다
+
+    const polygon = points.map((p) => screenToWorld(p.x, p.y));
+    const enclosedIds = notesInsidePolygon(polygon);
+    if (enclosedIds.length === 0) return;
+
+    createGroupsFromNoteIds(enclosedIds);
+    renderGroups();
+    setSelection(enclosedIds); // 방금 묶은 것들을 선택해둔다 (바로 타입을 바꾸기 편하게)
+    justBoxSelected = true; // 뒤따라오는 click 이 이 선택을 지우지 않도록
+    commitChange();
+  };
+
+  document.addEventListener("mousemove", onMove);
+  document.addEventListener("mouseup", onUp);
+});
+
 // 왼쪽 버튼(Ctrl 없이)으로 빈 곳을 드래그 → 사각형 영역에 걸친 메모를 모두 선택.
 // (움직이지 않고 떼면 그냥 클릭이므로, 아래 click 핸들러가 선택 해제를 처리한다)
 let justBoxSelected = false;
 
 canvas.addEventListener("mousedown", (e) => {
+  if (lassoMode) return; // 올가미 모드일 땐 위 핸들러가 대신 처리한다
   if (arrowDraft) return; // 화살표 연결 모드 중엔 영역 선택을 시작하지 않는다.
   if (e.button !== 0 || e.ctrlKey) return;
   if (e.target !== canvas) return; // 메모 위에서 시작된 드래그는 각 메모의 핸들러가 처리
@@ -2590,7 +2860,7 @@ document.addEventListener("keydown", (e) => {
   }
 });
 
-/* ===== 키보드: 도형 단축키(1/2/3) & 퀵메뉴 닫기(Esc) ===== */
+/* ===== 키보드: 도형 단축키(1/2/3), 올가미(L) & 퀵메뉴 닫기(Esc) ===== */
 
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape") {
@@ -2598,13 +2868,19 @@ document.addEventListener("keydown", (e) => {
       cancelArrowDraft();
       return;
     }
-    if (!quickMenuEl.hidden) closeQuickMenu();
+    if (!quickMenuEl.hidden) {
+      closeQuickMenu();
+      return;
+    }
+    if (lassoMode) setLassoMode(false); // 올가미 모드에서 빠져나오기
     return;
   }
 
-  if (e.key !== "1" && e.key !== "2" && e.key !== "3") return;
+  const key = e.key.toLowerCase();
+  if (key !== "1" && key !== "2" && key !== "3" && key !== "l") return;
+  if (e.ctrlKey || e.metaKey || e.altKey) return; // Ctrl+L(주소창) 같은 조합은 건드리지 않는다
 
-  // 텍스트 편집/입력 중이면 숫자는 평범한 글자 입력으로 취급한다.
+  // 텍스트 편집/입력 중이면 평범한 글자 입력으로 취급한다.
   const active = document.activeElement;
   if (
     active &&
@@ -2615,8 +2891,13 @@ document.addEventListener("keydown", (e) => {
     return;
   }
 
+  if (key === "l") {
+    setLassoMode(!lassoMode);
+    return;
+  }
+
   const shapeByKey = { 1: "rect", 2: "ellipse", 3: "diamond" };
-  setNextShape(shapeByKey[e.key]);
+  setNextShape(shapeByKey[key]);
 });
 
 /* ===== 캔버스(현재 페이지) 메모 검색 (Ctrl+F) ===== */

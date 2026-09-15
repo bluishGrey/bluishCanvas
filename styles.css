@@ -48,12 +48,104 @@ body {
   cursor: crosshair;
 }
 
+/* 올가미 모드에서도 십자선 커서를 쓴다 (지금 평소 모드가 아니라는 신호). */
+#canvas.lasso {
+  cursor: crosshair;
+}
+
 /* ===== 다중 선택 영역 박스 (화면 좌표, transform 영향 안 받음) ===== */
 #selection-box {
   position: absolute;
   border: 1px solid var(--accent);
   background: rgba(59, 111, 212, 0.12);
   pointer-events: none;
+}
+
+/* ===== 그룹 박스 (월드 좌표 — #world 안에 있어서 팬/줌을 그대로 따라간다) =====
+   메모 하나하나에 배지를 달면 화면이 어지러워지므로, 묶음 전체를 옅은 박스로만 감싼다.
+   타입은 배경색으로 구분한다(플로우차트=파랑 계열, 마인드맵=초록 계열). */
+#groups-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+}
+
+.group-box {
+  position: absolute;
+  border-radius: 10px;
+  border: 1px dashed rgba(59, 111, 212, 0.45);
+  background: rgba(59, 111, 212, 0.07);
+  pointer-events: none; /* 박스가 메모 클릭/드래그를 가로채면 안 된다 */
+}
+
+.group-box[data-diagram-type="mindmap"] {
+  border-color: rgba(45, 154, 100, 0.45);
+  background: rgba(45, 154, 100, 0.08);
+}
+
+/* 이름 라벨 + 해제 버튼만 클릭을 받는다 */
+.group-label {
+  position: absolute;
+  top: -11px;
+  left: 10px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  background: rgba(59, 111, 212, 0.85);
+  color: #fff;
+  font-size: 11px;
+  line-height: 1.6;
+  white-space: nowrap;
+  pointer-events: auto;
+  cursor: text;
+}
+
+.group-box[data-diagram-type="mindmap"] .group-label {
+  background: rgba(45, 154, 100, 0.85);
+}
+
+.group-ungroup-btn {
+  border: none;
+  background: none;
+  color: rgba(255, 255, 255, 0.75);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0;
+  cursor: pointer;
+}
+
+.group-ungroup-btn:hover {
+  color: #fff;
+}
+
+.group-name-input {
+  font: inherit;
+  font-size: 11px;
+  width: 90px;
+  border: none;
+  border-radius: 4px;
+  padding: 0 4px;
+  outline: none;
+}
+
+/* ===== 올가미 경로 (화면 좌표, transform 영향 안 받음) ===== */
+#lasso-layer {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  overflow: visible;
+}
+
+#lasso-path {
+  fill: rgba(59, 111, 212, 0.1);
+  stroke: var(--accent);
+  stroke-width: 1.5;
+  stroke-dasharray: 5 4;
 }
 
 /* ===== 선택된 메모의 실제 경계 상자 표시 (화면 좌표, transform 영향 안 받음) ===== */
@@ -426,6 +518,28 @@ body {
 
 #canvas-search-btn:hover {
   border-color: var(--accent);
+}
+
+#lasso-btn {
+  border: 1px solid var(--note-border);
+  background: #fff;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 11.5px;
+  color: #55617a;
+  cursor: pointer;
+}
+
+#lasso-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+#lasso-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
 }
 
 /* ===== 다음 생성 도형 미니 팔레트 (Excalidraw 스타일 아이콘 열) ===== */
