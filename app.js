@@ -61,17 +61,33 @@ const DEFAULT_FONT_SIZE = 14;
 const DEFAULT_TEXT_ALIGN = "center";
 const DEFAULT_BORDER_WIDTH = 1;
 
+/* ===== 다이어그램 타입 (Mermaid 변환용) =====
+ * 도형마다 "이건 플로우차트의 일부다 / 마인드맵의 일부다"를 지정한다. 페이지 단위가 아니라
+ * 도형 단위라서, 한 페이지에 두 종류가 공존할 수 있다. null = 미지정(아직 안 정함)이며,
+ * 이 기능이 생기기 전에 만든 메모는 전부 미지정으로 채워진다. */
+const DIAGRAM_TYPE_LABELS = { flowchart: "플로우차트", mindmap: "마인드맵" };
+const DEFAULT_DIAGRAM_TYPE = "flowchart";
+
 const view = { x: 0, y: 0, scale: 1 };
 let notes = [];
 let nextId = 1;
 let selectedIds = new Set(); // 현재 선택된 메모 id 들
 let nextShape = DEFAULT_SHAPE; // 다음에 빈 곳을 더블클릭(또는 퀵메뉴로 생성)할 때 쓸 도형
+let nextDiagramType = DEFAULT_DIAGRAM_TYPE; // 다음에 만들 메모에 붙일 다이어그램 타입
 
 let arrows = []; // { id, fromId, toId, label? }
 let nextArrowId = 1;
 let selectedArrowIds = new Set();
 let arrowDraft = null; // 화살표 연결 모드 중일 때만 { fromId }
 let editingArrowLabelId = null; // 화살표 라벨을 입력 중인 화살표 id (한 번에 하나만)
+
+/* ===== 그룹 =====
+ * 올가미(라쏘)로 감싼 도형들의 묶음. Mermaid 로 내보낼 때 플로우차트의 subgraph 또는
+ * 마인드맵 문서 하나가 된다. 그룹은 타입을 따로 저장하지 않고 멤버 도형의 diagramType 에서
+ * 파생한다(한 군데만 진실을 두기 위해서 — 그룹 안 도형은 항상 같은 타입으로 유지된다).
+ * 중첩은 없다: 도형 하나는 최대 한 그룹에만 속한다. */
+let groups = []; // { id, name, noteIds: [...] }
+let nextGroupId = 1;
 
 // 실행취소/다시실행: notes 의 스냅샷 목록. history[historyIndex] 가 현재 상태.
 // 팬/줌은 기록 대상이 아니다 (생성/이동/삭제/텍스트 수정만 기록).
@@ -109,7 +125,7 @@ let sidebarSearchQuery = ""; // 소문자로 다듬어진 사이드바 검색어
 let backupInfo = { lastExport: null, lastImport: null }; // { at: ISOString, filename } | null
 
 function createEmptyPageData() {
-  return { view: { x: 0, y: 0, scale: 1 }, notes: [], arrows: [], nextId: 1, nextArrowId: 1 };
+  return { view: { x: 0, y: 0, scale: 1 }, notes: [], arrows: [], groups: [], nextId: 1, nextArrowId: 1, nextGroupId: 1 };
 }
 
 function backfillNoteDefaults(noteList) {
@@ -121,6 +137,7 @@ function backfillNoteDefaults(noteList) {
     if (typeof n.fontSize !== "number") n.fontSize = DEFAULT_FONT_SIZE;
     if (!n.textAlign) n.textAlign = DEFAULT_TEXT_ALIGN;
     if (typeof n.borderWidth !== "number") n.borderWidth = DEFAULT_BORDER_WIDTH;
+    if (n.diagramType === undefined) n.diagramType = null; // null = 다이어그램 타입 미지정
   });
 }
 
@@ -185,13 +202,7 @@ function collectPageIds(node) {
 /* ===== 저장 / 불러오기 (localStorage) ===== */
 
 function serializeCurrentPage() {
-  return {
-    view: { ...view },
-    notes: cloneNotes(),
-    arrows: cloneArrows(),
-    nextId,
-    nextArrowId,
-  };
+  return { view: { ...view }, ...makeSnapshot() };
 }
 
 function save() {
@@ -255,11 +266,51 @@ function cloneArrows() {
   return arrows.map((a) => ({ ...a }));
 }
 
+// noteIds 배열까지 새로 만들어야 한다 — 얕게만 복사하면 과거 스냅샷과 배열을 공유해서,
+// 나중에 그룹 멤버가 바뀌면 되돌릴 수 없는 상태가 된다.
+function cloneGroups() {
+  return groups.map((g) => ({ ...g, noteIds: [...g.noteIds] }));
+}
+
+/* 페이지 하나의 "내용"(팬/줌 상태 제외)을 한 덩어리로 만들고 되돌리는 한 쌍.
+ * 실행취소 스냅샷과 페이지 저장이 똑같은 모양을 쓰기 때문에, 앞으로 상태 필드가 늘어날 때
+ * 여기 두 함수만 고치면 된다 (예전엔 같은 모양이 여섯 군데에 손으로 중복돼 있어서,
+ * 한 곳만 빠뜨려도 "실행취소하면 새 필드가 사라지는" 버그가 나기 쉬웠다). */
+function makeSnapshot() {
+  return {
+    notes: cloneNotes(),
+    arrows: cloneArrows(),
+    groups: cloneGroups(),
+    nextId,
+    nextArrowId,
+    nextGroupId,
+  };
+}
+
+// 스냅샷을 전역 상태로 되돌리고 메모/화살표를 다시 그린다. 선택 상태는 대상이 통째로
+// 바뀌므로 비운다. 호출한 쪽에서 필요한 뒷정리(뷰 적용, 패널 갱신 등)를 이어서 한다.
+function applySnapshot(snapshot) {
+  world.querySelectorAll(".note").forEach((el) => el.remove());
+  arrowsLayerEl.querySelectorAll(".arrow").forEach((el) => el.remove());
+
+  notes = (snapshot.notes || []).map((n) => ({ ...n }));
+  arrows = (snapshot.arrows || []).map((a) => ({ ...a }));
+  groups = (snapshot.groups || []).map((g) => ({ ...g, noteIds: [...(g.noteIds || [])] }));
+  nextId = snapshot.nextId || 1;
+  nextArrowId = snapshot.nextArrowId || 1;
+  nextGroupId = snapshot.nextGroupId || 1;
+  selectedIds = new Set();
+  selectedArrowIds = new Set();
+
+  notes.forEach(renderNote);
+  arrows.forEach(renderArrow);
+}
+
 // 지금까지의 변경을 히스토리 한 칸으로 확정한다. (생성/이동/삭제/텍스트 수정 완료 시점에 호출)
 function pushHistory() {
   if (isRestoringHistory) return;
   history = history.slice(0, historyIndex + 1); // 이후의 "다시실행" 가능했던 기록은 버린다
-  history.push({ notes: cloneNotes(), arrows: cloneArrows(), nextId, nextArrowId });
+  history.push(makeSnapshot());
   while (history.length > MAX_HISTORY) {
     history.shift();
   }
@@ -273,16 +324,7 @@ function commitChange() {
 
 function restoreSnapshot(snapshot) {
   isRestoringHistory = true;
-  world.querySelectorAll(".note").forEach((el) => el.remove());
-  arrowsLayerEl.querySelectorAll(".arrow").forEach((el) => el.remove());
-  notes = snapshot.notes.map((n) => ({ ...n }));
-  arrows = (snapshot.arrows || []).map((a) => ({ ...a }));
-  nextId = snapshot.nextId;
-  nextArrowId = snapshot.nextArrowId || 1;
-  selectedIds = new Set(); // 대상이 바뀌므로 선택은 비운다
-  selectedArrowIds = new Set();
-  notes.forEach(renderNote);
-  arrows.forEach(renderArrow);
+  applySnapshot(snapshot);
   updateHandles();
   updateStylePanel();
   closeCanvasSearch(); // notes 를 통째로 다시 그렸으니, 남아있던 검색 하이라이트/결과는 무효
@@ -308,22 +350,12 @@ function redo() {
  * (DOM 비우고 다시 그리기) — 다만 view 도 같이 바꾸고, 히스토리는 페이지별로 따로 보관한다. */
 
 function loadPageIntoGlobals(pageData) {
-  world.querySelectorAll(".note").forEach((el) => el.remove());
-  arrowsLayerEl.querySelectorAll(".arrow").forEach((el) => el.remove());
-
-  notes = (pageData.notes || []).map((n) => ({ ...n }));
-  arrows = (pageData.arrows || []).map((a) => ({ ...a }));
+  applySnapshot(pageData); // 메모/화살표/그룹 상태 교체 + 다시 그리기
   Object.assign(view, pageData.view || { x: 0, y: 0, scale: 1 });
-  nextId = pageData.nextId || 1;
-  nextArrowId = pageData.nextArrowId || 1;
-  selectedIds = new Set();
-  selectedArrowIds = new Set();
   cancelArrowDraft();
   closeQuickMenu();
   closeCanvasSearch(); // 검색은 "현재 페이지 안"으로 범위가 한정되므로, 페이지가 바뀌면 닫는다
 
-  notes.forEach(renderNote);
-  arrows.forEach(renderArrow);
   applyTransform(); // 내부에서 updateHandles 도 같이 갱신된다
   updateStylePanel();
 }
@@ -342,7 +374,7 @@ function switchToPage(pageId) {
     history = savedHist.history;
     historyIndex = savedHist.historyIndex;
   } else {
-    history = [{ notes: cloneNotes(), arrows: cloneArrows(), nextId, nextArrowId }];
+    history = [makeSnapshot()];
     historyIndex = 0;
   }
 
@@ -459,7 +491,7 @@ function deleteNodeAndPages(id, pageIds) {
       history = savedHist.history;
       historyIndex = savedHist.historyIndex;
     } else {
-      history = [{ notes: cloneNotes(), arrows: cloneArrows(), nextId, nextArrowId }];
+      history = [makeSnapshot()];
       historyIndex = 0;
     }
   }
@@ -902,7 +934,14 @@ document.querySelectorAll("#style-panel-body [data-style-field]").forEach((row) 
   row.querySelectorAll("button").forEach((btn) => {
     btn.addEventListener("click", () => {
       const raw = btn.dataset.value;
-      const value = field === "textAlign" ? raw : Number(raw);
+      let value;
+      if (field === "textAlign") {
+        value = raw;
+      } else if (field === "diagramType") {
+        value = raw === "none" ? null : raw; // "미지정"은 null 로 저장한다
+      } else {
+        value = Number(raw);
+      }
       applyStyleToSelection(field, value);
     });
   });
@@ -1127,7 +1166,7 @@ function importBackup(data, filename) {
         history = savedHist.history;
         historyIndex = savedHist.historyIndex;
       } else {
-        history = [{ notes: cloneNotes(), arrows: cloneArrows(), nextId, nextArrowId }];
+        history = [makeSnapshot()];
         historyIndex = 0;
       }
     }
@@ -1885,6 +1924,7 @@ function createNote(worldX, worldY, text = "", shape = nextShape) {
     fontSize: DEFAULT_FONT_SIZE,
     textAlign: DEFAULT_TEXT_ALIGN,
     borderWidth: DEFAULT_BORDER_WIDTH,
+    diagramType: nextDiagramType,
   };
   notes.push(note);
   const el = renderNote(note);
@@ -1905,11 +1945,41 @@ function removeNoteFromState(id) {
     .filter((a) => a.fromId === id || a.toId === id)
     .map((a) => a.id);
   connectedArrowIds.forEach(removeArrowFromState);
+
+  removeNoteFromItsGroup(id); // 속해 있던 그룹에서도 빼고, 비면 그룹 자체를 없앤다
 }
 
 function deleteNote(id) {
   removeNoteFromState(id);
   commitChange();
+}
+
+/* ===== 그룹 (올가미로 묶은 도형 묶음) ===== */
+
+function getGroup(id) {
+  return groups.find((g) => g.id === id);
+}
+
+function groupOfNote(noteId) {
+  return groups.find((g) => g.noteIds.includes(noteId));
+}
+
+// 그룹의 다이어그램 타입은 따로 저장하지 않고 멤버에서 읽는다 (멤버는 항상 같은 타입).
+function groupDiagramType(group) {
+  for (const noteId of group.noteIds) {
+    const note = getNote(noteId);
+    if (note && note.diagramType) return note.diagramType;
+  }
+  return null;
+}
+
+function removeNoteFromItsGroup(noteId) {
+  const group = groupOfNote(noteId);
+  if (!group) return;
+  group.noteIds = group.noteIds.filter((id) => id !== noteId);
+  if (group.noteIds.length === 0) {
+    groups = groups.filter((g) => g.id !== group.id);
+  }
 }
 
 /* ===== 메모 꾸미기 (사이드바 "꾸미기" 패널) =====
@@ -1950,7 +2020,18 @@ function updateNoteStyleDOM(note) {
 // 선택된 메모(들) 전부에 같은 스타일 값을 적용하고, 한 번에 히스토리로 기록한다.
 function applyStyleToSelection(field, value) {
   if (selectedIds.size === 0) return;
-  selectedIds.forEach((id) => {
+
+  // 다이어그램 타입만 예외: 그룹에 속한 도형이면 그 그룹 전체에 적용한다.
+  // 그룹은 "같은 타입 도형들의 묶음"이라, 한 도형만 타입이 달라지면 안 되기 때문.
+  const targetIds = new Set(selectedIds);
+  if (field === "diagramType") {
+    selectedIds.forEach((id) => {
+      const group = groupOfNote(id);
+      if (group) group.noteIds.forEach((memberId) => targetIds.add(memberId));
+    });
+  }
+
+  targetIds.forEach((id) => {
     const note = getNote(id);
     if (!note) return;
     note[field] = value;
@@ -1990,6 +2071,8 @@ function updateStylePanel() {
   setStyleButtonRowActive("fontSize", first.fontSize ?? DEFAULT_FONT_SIZE);
   setStyleButtonRowActive("textAlign", first.textAlign || DEFAULT_TEXT_ALIGN);
   setStyleButtonRowActive("borderWidth", first.borderWidth ?? DEFAULT_BORDER_WIDTH);
+  // 미지정(null)은 버튼의 data-value="none" 과 짝지어 표시한다.
+  setStyleButtonRowActive("diagramType", first.diagramType || "none");
 }
 
 function renderNote(note) {
@@ -2193,6 +2276,43 @@ function updateShapeUIHighlight() {
 
 document.querySelectorAll(".shape-palette-btn").forEach((btn) => {
   btn.addEventListener("click", () => setNextShape(btn.dataset.shape));
+});
+
+/* ===== 다음 생성 다이어그램 타입 (툴바 토글 / Tab) ===== */
+
+function setNextDiagramType(type) {
+  if (!DIAGRAM_TYPE_LABELS[type]) return;
+  nextDiagramType = type;
+  updateDiagramTypeHighlight();
+}
+
+function updateDiagramTypeHighlight() {
+  document.querySelectorAll(".diagram-type-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.diagramType === nextDiagramType);
+  });
+}
+
+document.querySelectorAll(".diagram-type-btn").forEach((btn) => {
+  btn.addEventListener("click", () => setNextDiagramType(btn.dataset.diagramType));
+});
+
+// Tab 으로 플로우차트 <-> 마인드맵 전환. preventDefault 를 안 하면 브라우저가 포커스를
+// 다음 요소로 옮겨버리므로 반드시 막아야 한다.
+document.addEventListener("keydown", (e) => {
+  if (e.key !== "Tab" || e.ctrlKey || e.metaKey || e.altKey) return;
+
+  const active = document.activeElement;
+  if (
+    active &&
+    (active.isContentEditable ||
+      active.tagName === "INPUT" ||
+      active.tagName === "TEXTAREA")
+  ) {
+    return; // 글자 입력 중일 땐 평소의 Tab 동작을 그대로 둔다
+  }
+
+  e.preventDefault();
+  setNextDiagramType(nextDiagramType === "flowchart" ? "mindmap" : "flowchart");
 });
 
 let quickMenuWorldPos = null; // 퀵메뉴를 열었을 때의 월드 좌표 (거기에 메모를 추가하려고 기억해둠)
@@ -2645,12 +2765,13 @@ document.addEventListener("keydown", (e) => {
 
 initResizeHandles();
 setNextShape(nextShape); // 라벨/퀵메뉴 표시를 초기 상태와 맞춘다
+setNextDiagramType(nextDiagramType); // 툴바의 다이어그램 타입 표시도 초기 상태와 맞춘다
 
 load(); // tree / pagesData / activePageId 를 채운다 (필요하면 v1 데이터 마이그레이션도 함께)
 loadPageIntoGlobals(pagesData[activePageId] || createEmptyPageData());
 
 // 히스토리 시작점: 지금 이 상태로 되돌아올 수 있게 첫 칸을 기록해둔다.
-history = [{ notes: cloneNotes(), arrows: cloneArrows(), nextId, nextArrowId }];
+history = [makeSnapshot()];
 historyIndex = 0;
 
 renderSidebar();

@@ -463,6 +463,36 @@ body {
   color: #fff;
 }
 
+/* ===== 다음 생성 다이어그램 타입 토글 (Tab 으로 전환) ===== */
+#diagram-type-palette {
+  display: flex;
+  gap: 4px;
+  padding-right: 8px;
+  border-right: 1px solid var(--note-border);
+}
+
+.diagram-type-btn {
+  border: 1px solid var(--note-border);
+  background: #fff;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 11.5px;
+  color: #55617a;
+  cursor: pointer;
+}
+
+.diagram-type-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.diagram-type-btn.active {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+
 /* 아이콘 모서리에 작게 붙는 단축키 숫자 배지 */
 .shape-key {
   position: absolute;
