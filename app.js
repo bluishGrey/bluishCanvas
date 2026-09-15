@@ -41,6 +41,11 @@ const canvasSearchBtn = document.getElementById("canvas-search-btn");
 const lassoBtn = document.getElementById("lasso-btn");
 const lassoPathEl = document.getElementById("lasso-path");
 const groupsLayerEl = document.getElementById("groups-layer");
+const mermaidBtn = document.getElementById("mermaid-btn");
+const mermaidPopup = document.getElementById("mermaid-popup");
+const mermaidCloseBtn = document.getElementById("mermaid-close-btn");
+const mermaidWarningsEl = document.getElementById("mermaid-warnings");
+const mermaidBlocksEl = document.getElementById("mermaid-blocks");
 const helpBtn = document.getElementById("help-btn");
 const helpPopup = document.getElementById("help-popup");
 const helpCloseBtn = document.getElementById("help-close-btn");
@@ -2898,6 +2903,320 @@ document.addEventListener("keydown", (e) => {
 
   const shapeByKey = { 1: "rect", 2: "ellipse", 3: "diamond" };
   setNextShape(shapeByKey[key]);
+});
+
+/* ===== Mermaid 내보내기 =====
+ * 현재 페이지의 도형/화살표/그룹을 Mermaid 텍스트로 바꾼다. 클로드와 주고받는 "번역 언어"라서,
+ * 좌표·크기·꾸미기 같은 그리기 정보는 일부러 버리고 구조(무엇이 무엇과 이어지는지)만 남긴다.
+ *
+ * Mermaid 는 문서 하나에 다이어그램 타입을 하나만 선언할 수 있으므로(flowchart 또는 mindmap),
+ * 한 페이지에 두 타입이 섞여 있으면 여러 블록으로 나눠서 내보낸다:
+ *   - 플로우차트 도형 전체 → 블록 1개 (그룹은 subgraph 가 된다)
+ *   - 마인드맵 그룹 → 그룹마다 블록 1개 (마인드맵은 중심 하나에서 뻗는 트리여야 하므로)
+ *
+ * DOM 을 건드리지 않는 순수 함수라, 테스트에서 결과 문자열만 바로 검사할 수 있다. */
+
+const MERMAID_INDENT = "  ";
+
+function isExportableType(type) {
+  return type === "flowchart" || type === "mindmap";
+}
+
+// 노드 라벨 안에서 문법을 깨뜨리는 글자를 안전하게 바꾼다.
+function escapeMermaidLabel(text) {
+  const trimmed = (text || "").trim();
+  if (!trimmed) return "(빈 메모)";
+  return trimmed.replace(/"/g, "#quot;").replace(/\s*\n\s*/g, "<br/>");
+}
+
+// 마인드맵은 라벨을 따옴표로 감싸지 않고 괄호류로 모양을 정하는 문법이라,
+// 괄호가 텍스트에 들어있으면 파싱이 깨진다. 그래서 여기서만 따로 정리한다.
+function sanitizeMindmapLabel(text) {
+  const trimmed = (text || "").trim();
+  if (!trimmed) return "(빈 메모)";
+  return trimmed.replace(/\s*\n\s*/g, " ").replace(/[[\](){}"]/g, "");
+}
+
+function mermaidNodeId(noteId) {
+  return `N${noteId}`;
+}
+
+// 도형 모양 → 플로우차트 노드 문법
+function flowchartNodeLine(note) {
+  const label = escapeMermaidLabel(note.text);
+  const id = mermaidNodeId(note.id);
+  if (note.shape === "diamond") return `${id}{"${label}"}`;
+  if (note.shape === "ellipse") return `${id}(("${label}"))`;
+  return `${id}["${label}"]`;
+}
+
+// 도형 모양 → 마인드맵 노드 문법. 마인드맵엔 마름모가 없어서 육각형으로 대체한다.
+function mindmapNodeLine(note) {
+  const label = sanitizeMindmapLabel(note.text);
+  const id = mermaidNodeId(note.id);
+  if (note.shape === "diamond") return `${id}{{${label}}}`;
+  if (note.shape === "ellipse") return `${id}((${label}))`;
+  return `${id}[${label}]`;
+}
+
+// 마인드맵 그룹의 화살표들로 트리를 만든다. 트리가 아니면 why 에 이유를 담아 돌려준다.
+function buildMindmapTree(group, groupArrows) {
+  const memberIds = group.noteIds.filter((id) => getNote(id));
+  const parentOf = new Map();
+  const childrenOf = new Map();
+  memberIds.forEach((id) => childrenOf.set(id, []));
+
+  for (const arrow of groupArrows) {
+    if (parentOf.has(arrow.toId)) {
+      const note = getNote(arrow.toId);
+      return { error: `"${(note && note.text) || arrow.toId}" 도형으로 화살표가 두 개 이상 들어옵니다. 마인드맵은 부모가 하나뿐인 트리여야 합니다.` };
+    }
+    parentOf.set(arrow.toId, arrow.fromId);
+    childrenOf.get(arrow.fromId).push(arrow.toId);
+  }
+
+  const roots = memberIds.filter((id) => !parentOf.has(id));
+  if (roots.length === 0) {
+    return { error: "화살표가 순환하고 있어 시작점(중심)을 찾을 수 없습니다." };
+  }
+  if (roots.length > 1) {
+    const names = roots.map((id) => `"${(getNote(id).text || "").trim() || id}"`).join(", ");
+    return { error: `중심이 될 수 있는 도형이 여러 개입니다(${names}). 마인드맵은 하나의 중심에서 뻗어나가야 합니다 — 화살표로 이어주세요.` };
+  }
+
+  return { root: roots[0], childrenOf };
+}
+
+function generateMermaid() {
+  const blocks = [];
+  const warnings = [];
+  const typeOfNote = (id) => {
+    const note = getNote(id);
+    return note ? note.diagramType : null;
+  };
+
+  // --- 변환에서 빠지는 것들을 먼저 알려준다 ---
+  const unsetNotes = notes.filter((n) => !isExportableType(n.diagramType));
+  if (unsetNotes.length > 0) {
+    warnings.push(
+      `타입이 미지정인 도형 ${unsetNotes.length}개를 제외했습니다. 올가미로 묶거나 꾸미기 패널에서 타입을 지정하면 포함됩니다.`
+    );
+  }
+
+  const droppedByUnset = arrows.filter(
+    (a) => !isExportableType(typeOfNote(a.fromId)) || !isExportableType(typeOfNote(a.toId))
+  );
+  if (droppedByUnset.length > 0) {
+    warnings.push(`미지정 도형에 연결된 화살표 ${droppedByUnset.length}개도 함께 제외했습니다.`);
+  }
+
+  const crossTypeArrows = arrows.filter((a) => {
+    const from = typeOfNote(a.fromId);
+    const to = typeOfNote(a.toId);
+    return isExportableType(from) && isExportableType(to) && from !== to;
+  });
+  if (crossTypeArrows.length > 0) {
+    warnings.push(
+      `타입이 서로 다른 도형을 잇는 화살표 ${crossTypeArrows.length}개를 제외했습니다. Mermaid 는 문서 하나에 한 종류의 다이어그램만 담을 수 있습니다.`
+    );
+  }
+
+  // --- 플로우차트 블록 (그룹은 subgraph, 그룹 밖 도형은 그대로) ---
+  const flowNotes = notes.filter((n) => n.diagramType === "flowchart");
+  if (flowNotes.length > 0) {
+    const lines = ["flowchart TD"];
+    const emitted = new Set();
+
+    groups.forEach((group) => {
+      const members = group.noteIds.map(getNote).filter((n) => n && n.diagramType === "flowchart");
+      if (members.length === 0) return;
+      lines.push(`${MERMAID_INDENT}subgraph ${group.id}["${escapeMermaidLabel(group.name)}"]`);
+      members.forEach((note) => {
+        lines.push(`${MERMAID_INDENT}${MERMAID_INDENT}${flowchartNodeLine(note)}`);
+        emitted.add(note.id);
+      });
+      lines.push(`${MERMAID_INDENT}end`);
+    });
+
+    flowNotes.forEach((note) => {
+      if (emitted.has(note.id)) return;
+      lines.push(`${MERMAID_INDENT}${flowchartNodeLine(note)}`);
+    });
+
+    // 화살표는 subgraph 블록이 모두 끝난 뒤에 선언한다 — 그래야 그룹을 가로지르는
+    // 연결도 문제없이 표현된다.
+    arrows.forEach((arrow) => {
+      if (typeOfNote(arrow.fromId) !== "flowchart" || typeOfNote(arrow.toId) !== "flowchart") return;
+      const from = mermaidNodeId(arrow.fromId);
+      const to = mermaidNodeId(arrow.toId);
+      const label = (arrow.label || "").trim();
+      lines.push(
+        label
+          ? `${MERMAID_INDENT}${from} -->|"${escapeMermaidLabel(label)}"| ${to}`
+          : `${MERMAID_INDENT}${from} --> ${to}`
+      );
+    });
+
+    blocks.push({ title: "플로우차트", text: lines.join("\n") });
+  }
+
+  // --- 마인드맵 블록 (그룹 하나 = 문서 하나) ---
+  const mindmapGroups = groups.filter((g) =>
+    g.noteIds.some((id) => {
+      const note = getNote(id);
+      return note && note.diagramType === "mindmap";
+    })
+  );
+
+  const groupedMindmapIds = new Set();
+  mindmapGroups.forEach((g) => g.noteIds.forEach((id) => groupedMindmapIds.add(id)));
+  const looseMindmapNotes = notes.filter(
+    (n) => n.diagramType === "mindmap" && !groupedMindmapIds.has(n.id)
+  );
+  if (looseMindmapNotes.length > 0) {
+    warnings.push(
+      `그룹에 속하지 않은 마인드맵 도형 ${looseMindmapNotes.length}개를 제외했습니다. 마인드맵은 올가미로 묶은 그룹 단위로 내보냅니다.`
+    );
+  }
+
+  let labelsIgnored = 0;
+  mindmapGroups.forEach((group) => {
+    const memberIdSet = new Set(group.noteIds);
+    const groupArrows = arrows.filter(
+      (a) => memberIdSet.has(a.fromId) && memberIdSet.has(a.toId)
+    );
+    labelsIgnored += groupArrows.filter((a) => (a.label || "").trim()).length;
+
+    const tree = buildMindmapTree(group, groupArrows);
+    if (tree.error) {
+      warnings.push(`마인드맵 그룹 "${group.name}"을(를) 변환하지 못했습니다 — ${tree.error}`);
+      return;
+    }
+
+    const lines = ["mindmap"];
+    const walk = (noteId, depth) => {
+      const note = getNote(noteId);
+      if (!note) return;
+      lines.push(`${MERMAID_INDENT.repeat(depth + 1)}${mindmapNodeLine(note)}`);
+      tree.childrenOf.get(noteId).forEach((childId) => walk(childId, depth + 1));
+    };
+    walk(tree.root, 0);
+
+    blocks.push({ title: `마인드맵 — ${group.name}`, text: lines.join("\n") });
+  });
+
+  if (labelsIgnored > 0) {
+    warnings.push(`마인드맵 안 화살표 라벨 ${labelsIgnored}개는 무시했습니다. Mermaid 마인드맵 문법에는 화살표 라벨이 없습니다.`);
+  }
+
+  return { blocks, warnings };
+}
+
+/* ----- Mermaid 결과 팝업 ----- */
+
+function copyTextToClipboard(text, btn) {
+  const done = () => {
+    const original = btn.textContent;
+    btn.textContent = "복사됨";
+    setTimeout(() => {
+      btn.textContent = original;
+    }, 1200);
+  };
+  if (navigator.clipboard && navigator.clipboard.writeText) {
+    navigator.clipboard.writeText(text).then(done, () => fallbackCopy(text, done));
+  } else {
+    fallbackCopy(text, done);
+  }
+}
+
+// clipboard API 가 막혀 있는 환경(권한 거부 등)을 위한 예비 수단.
+function fallbackCopy(text, done) {
+  const temp = document.createElement("textarea");
+  temp.value = text;
+  document.body.appendChild(temp);
+  temp.select();
+  try {
+    document.execCommand("copy");
+    done();
+  } catch (e) {
+    // 복사가 안 되면 사용자가 직접 선택해서 복사하면 된다 (텍스트는 이미 화면에 있다).
+  }
+  temp.remove();
+}
+
+function openMermaidPopup() {
+  const { blocks, warnings } = generateMermaid();
+
+  if (warnings.length > 0) {
+    mermaidWarningsEl.hidden = false;
+    mermaidWarningsEl.innerHTML = "";
+    const list = document.createElement("ul");
+    warnings.forEach((text) => {
+      const item = document.createElement("li");
+      item.textContent = text;
+      list.appendChild(item);
+    });
+    mermaidWarningsEl.appendChild(list);
+  } else {
+    mermaidWarningsEl.hidden = true;
+    mermaidWarningsEl.innerHTML = "";
+  }
+
+  mermaidBlocksEl.innerHTML = "";
+  if (blocks.length === 0) {
+    const empty = document.createElement("div");
+    empty.id = "mermaid-empty";
+    empty.textContent =
+      "내보낼 내용이 없습니다. 도형을 만들고 올가미(L)로 묶거나 꾸미기 패널에서 다이어그램 타입을 지정해주세요.";
+    mermaidBlocksEl.appendChild(empty);
+  }
+
+  blocks.forEach((block) => {
+    const wrap = document.createElement("div");
+    wrap.className = "mermaid-block";
+
+    const head = document.createElement("div");
+    head.className = "mermaid-block-head";
+
+    const title = document.createElement("span");
+    title.className = "mermaid-block-title";
+    title.textContent = block.title;
+    head.appendChild(title);
+
+    const copyBtn = document.createElement("button");
+    copyBtn.type = "button";
+    copyBtn.className = "mermaid-copy-btn";
+    copyBtn.textContent = "복사";
+    copyBtn.addEventListener("click", () => copyTextToClipboard(block.text, copyBtn));
+    head.appendChild(copyBtn);
+
+    const textarea = document.createElement("textarea");
+    textarea.className = "mermaid-text";
+    textarea.readOnly = true;
+    textarea.value = block.text;
+
+    wrap.appendChild(head);
+    wrap.appendChild(textarea);
+    mermaidBlocksEl.appendChild(wrap);
+  });
+
+  mermaidPopup.hidden = false;
+}
+
+function closeMermaidPopup() {
+  mermaidPopup.hidden = true;
+}
+
+mermaidBtn.addEventListener("click", openMermaidPopup);
+mermaidCloseBtn.addEventListener("click", closeMermaidPopup);
+// 도움말 팝업과 같은 방식: 바깥을 클릭하면 닫는다(여는 버튼 클릭은 제외).
+document.addEventListener("click", (e) => {
+  if (mermaidPopup.hidden) return;
+  if (mermaidPopup.contains(e.target) || e.target === mermaidBtn || mermaidBtn.contains(e.target)) return;
+  closeMermaidPopup();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !mermaidPopup.hidden) closeMermaidPopup();
 });
 
 /* ===== 캔버스(현재 페이지) 메모 검색 (Ctrl+F) ===== */

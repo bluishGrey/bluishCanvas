@@ -542,6 +542,145 @@ body {
   color: #fff;
 }
 
+#mermaid-btn {
+  border: 1px solid var(--note-border);
+  background: #fff;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 11.5px;
+  color: #55617a;
+  cursor: pointer;
+}
+
+#mermaid-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+/* ===== Mermaid 내보내기 팝업 ===== */
+#mermaid-popup {
+  position: fixed;
+  top: 60px;
+  right: 14px;
+  width: 460px;
+  max-width: calc(100vw - 28px);
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(31, 39, 51, 0.3);
+  padding: 16px 18px;
+  z-index: 30;
+}
+
+#mermaid-popup[hidden] {
+  display: none;
+}
+
+#mermaid-title {
+  font-weight: 700;
+  font-size: 14px;
+  color: var(--text);
+  margin-bottom: 10px;
+  padding-right: 20px;
+}
+
+#mermaid-close-btn {
+  position: absolute;
+  top: 10px;
+  right: 12px;
+  border: none;
+  background: none;
+  color: #9aa7bd;
+  font-size: 20px;
+  line-height: 1;
+  cursor: pointer;
+  padding: 2px;
+}
+
+#mermaid-close-btn:hover {
+  color: var(--accent);
+}
+
+#mermaid-warnings {
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #fff8e6;
+  border: 1px solid #f0d9a0;
+  font-size: 11.5px;
+  line-height: 1.6;
+  color: #7a6320;
+}
+
+#mermaid-warnings ul {
+  margin: 0;
+  padding-left: 16px;
+}
+
+.mermaid-block {
+  margin-bottom: 14px;
+}
+
+.mermaid-block:last-child {
+  margin-bottom: 0;
+}
+
+.mermaid-block-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.mermaid-block-title {
+  font-size: 12px;
+  font-weight: 700;
+  color: var(--accent);
+}
+
+.mermaid-copy-btn {
+  border: 1px solid var(--note-border);
+  background: #fff;
+  border-radius: 6px;
+  padding: 2px 8px;
+  font: inherit;
+  font-size: 11px;
+  color: #55617a;
+  cursor: pointer;
+}
+
+.mermaid-copy-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.mermaid-text {
+  width: 100%;
+  box-sizing: border-box;
+  min-height: 120px;
+  max-height: 260px;
+  resize: vertical;
+  border: 1px solid var(--note-border);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-family: Consolas, "D2Coding", monospace;
+  font-size: 11.5px;
+  line-height: 1.55;
+  color: var(--text);
+  background: #fbfcfe;
+  outline: none;
+  white-space: pre;
+  overflow-wrap: normal;
+  overflow-x: auto;
+}
+
+#mermaid-empty {
+  font-size: 12px;
+  color: #9aa7bd;
+}
+
 /* ===== 다음 생성 도형 미니 팔레트 (Excalidraw 스타일 아이콘 열) ===== */
 #shape-palette {
   display: flex;

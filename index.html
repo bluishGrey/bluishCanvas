@@ -149,6 +149,7 @@
       <button type="button" class="diagram-type-btn" data-diagram-type="mindmap" title="마인드맵 (Tab으로 전환)">마인드맵</button>
     </div>
     <button type="button" id="lasso-btn" title="올가미로 그룹 묶기 (L)">◌ 올가미</button>
+    <button type="button" id="mermaid-btn" title="이 페이지를 Mermaid 텍스트로 내보내기">⤴ Mermaid</button>
     <button type="button" id="canvas-search-btn" title="메모 검색 (Ctrl+F)">🔍</button>
     <span id="zoom-label">100%</span>
     <button id="reset-view" type="button">화면 초기화</button>
@@ -227,6 +228,14 @@
         </ul>
       </section>
     </div>
+  </div>
+
+  <!-- Mermaid 내보내기 결과. 타입이 섞인 페이지는 블록이 여러 개 나온다. -->
+  <div id="mermaid-popup" hidden>
+    <button type="button" id="mermaid-close-btn" aria-label="닫기">×</button>
+    <div id="mermaid-title">Mermaid 내보내기</div>
+    <div id="mermaid-warnings" hidden></div>
+    <div id="mermaid-blocks"></div>
   </div>
 
   <!-- 빈 곳 우클릭 시 뜨는 퀵메뉴: 메모 추가 + 다음 생성 도형 전환 -->
