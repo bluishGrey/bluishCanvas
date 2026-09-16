@@ -47,6 +47,7 @@ const mermaidCloseBtn = document.getElementById("mermaid-close-btn");
 const mermaidWarningsEl = document.getElementById("mermaid-warnings");
 const mermaidBlocksEl = document.getElementById("mermaid-blocks");
 const groupContextMenuEl = document.getElementById("group-context-menu");
+const quickMenuGroupHintEl = document.getElementById("quick-menu-group-hint");
 const helpBtn = document.getElementById("help-btn");
 const helpPopup = document.getElementById("help-popup");
 const helpCloseBtn = document.getElementById("help-close-btn");
@@ -1932,7 +1933,10 @@ function initResizeHandles() {
 
 /* ===== 메모 ===== */
 
-function createNote(worldX, worldY, text = "", shape = nextShape) {
+// groupId 를 주면, 만들어진 메모를 그 그룹에 바로 편입시킨다(그룹 영역 안에서 우클릭
+// 퀵메뉴로 "이 그룹에 메모 추가"를 골랐을 때 — 방금 태어난 메모라 보호할 기존 타입
+// 선택이 없으므로 force=true 로 그룹 타입을 그대로 물려받는다).
+function createNote(worldX, worldY, text = "", shape = nextShape, groupId = null) {
   const note = {
     id: nextId++,
     x: worldX,
@@ -1949,6 +1953,10 @@ function createNote(worldX, worldY, text = "", shape = nextShape) {
   };
   notes.push(note);
   const el = renderNote(note);
+  if (groupId) {
+    addNotesToGroup([note.id], groupId, true);
+    renderGroups();
+  }
   commitChange();
   return el;
 }
@@ -2002,6 +2010,72 @@ function removeNoteFromItsGroup(noteId) {
   if (group.noteIds.length === 0) {
     groups = groups.filter((g) => g.id !== group.id);
   }
+}
+
+/* 도형(들)을 지정한 그룹 하나에 명시적으로 편입시킨다 — 그룹 이름표에 드래그해 놓거나,
+ * 그룹 영역 안에서 새 메모를 만들 때 쓴다(올가미처럼 "어느 그룹이 가장 클까" 같은 판단은
+ * 필요 없다, 대상이 이미 정해져 있으므로). 잠긴 그룹은 대상이 될 수 없고, 이미 잠긴
+ * 다른 그룹에 속한 도형은 거기서 빼올 수 없다.
+ * force=true 면 낱개 도형에 이미 명시된 타입이 있어도 그룹 타입으로 덮어쓴다 — 방금
+ * 그룹 영역 안에서 막 태어난 도형처럼, 보호할 "사용자의 기존 선택"이 애초에 없는
+ * 경우에만 쓴다. 기본값(false)은 올가미와 같은 원칙으로, 드래그로 기존 도형을 옮길 때
+ * 그 도형에 이미 다른 타입이 명시돼 있으면 건드리지 않고 남겨둔다. */
+function addNotesToGroup(noteIds, targetGroupId, force = false) {
+  const target = getGroup(targetGroupId);
+  if (!target || target.locked) return;
+  const hostType = groupDiagramType(target) || nextDiagramType;
+
+  noteIds.forEach((id) => {
+    if (target.noteIds.includes(id)) return;
+    const note = getNote(id);
+    if (!note) return;
+
+    const currentGroup = groupOfNote(id);
+    if (currentGroup) {
+      if (currentGroup.locked) return; // 잠긴 그룹에서는 빼올 수 없다
+      removeNoteFromItsGroup(id);
+      note.diagramType = hostType;
+      target.noteIds.push(id);
+      return;
+    }
+
+    if (!force && note.diagramType && note.diagramType !== hostType) return;
+    note.diagramType = hostType;
+    target.noteIds.push(id);
+  });
+}
+
+// 월드 좌표 한 점이 어느 그룹의 박스 영역 안에 있는지 (잠긴 그룹은 후보에서 제외 —
+// 새 도형이든 드래그로 옮기는 도형이든 잠긴 그룹에는 넣을 수 없으므로).
+function groupAtWorldPoint(point) {
+  for (const group of groups) {
+    if (group.locked) continue;
+    const bounds = groupBounds(group);
+    if (!bounds) continue;
+    if (
+      point.x >= bounds.x &&
+      point.x <= bounds.x + bounds.w &&
+      point.y >= bounds.y &&
+      point.y <= bounds.y + bounds.h
+    ) {
+      return group;
+    }
+  }
+  return null;
+}
+
+// 지금 드래그 중인 도형(들) 밑에 그룹 이름표가 있는지 찾는다. elementFromPoint 는
+// 드래그 중인 노트 자신이 커서 밑을 가리고 있으면 그것부터 걸리므로, 잠깐
+// pointer-events 를 꺼서 "그 아래" 요소를 찾을 수 있게 한다.
+function groupLabelUnderPoint(clientX, clientY, excludeEls) {
+  excludeEls.forEach((el) => el && (el.style.pointerEvents = "none"));
+  const hit = document.elementFromPoint(clientX, clientY);
+  excludeEls.forEach((el) => el && (el.style.pointerEvents = ""));
+  return hit ? hit.closest(".group-label") : null;
+}
+
+function clearGroupDropHighlight() {
+  groupsLayerEl.querySelectorAll(".group-label.drop-target").forEach((el) => el.classList.remove("drop-target"));
 }
 
 /* 아직 어떤 그룹에도 속하지 않은 도형들만으로 새 그룹(들)을 만든다.
@@ -2684,13 +2758,30 @@ function makeNoteInteractive(el, note, textEl) {
       updateHandles();
       updateAllArrowGeometry();
       updateGroupBoxGeometry();
+
+      // 드래그 중인 도형(들) 아래로 다른 그룹의 이름표가 지나가면, 여기 놓으면
+      // 그 그룹에 들어간다는 걸 살짝 강조해서 보여준다.
+      const draggedEls = startPositions.map((p) => p.el);
+      const hoverLabel = groupLabelUnderPoint(ev.clientX, ev.clientY, draggedEls);
+      clearGroupDropHighlight();
+      if (hoverLabel) hoverLabel.classList.add("drop-target");
     };
 
-    const onUp = () => {
+    const onUp = (ev) => {
       document.removeEventListener("mousemove", onMove);
       document.removeEventListener("mouseup", onUp);
       startPositions.forEach((p) => p.el && p.el.classList.remove("dragging"));
+      clearGroupDropHighlight();
+
       if (moved) {
+        // 그룹 이름표 위에 놓았으면(=드롭), 옮긴 도형(들)을 그 그룹에 편입시킨다.
+        const draggedEls = startPositions.map((p) => p.el);
+        const dropLabel = groupLabelUnderPoint(ev.clientX, ev.clientY, draggedEls);
+        const dropGroupBox = dropLabel && dropLabel.closest(".group-box");
+        if (dropGroupBox) {
+          addNotesToGroup(draggedIds, dropGroupBox.dataset.id);
+          renderGroups();
+        }
         commitChange();
       } else if (partOfMultiSelection) {
         // 그룹 안의 메모 하나를 그냥 클릭만 한 경우 → 그 메모 하나만 선택으로 좁힌다.
@@ -2776,10 +2867,21 @@ document.addEventListener("keydown", (e) => {
 });
 
 let quickMenuWorldPos = null; // 퀵메뉴를 열었을 때의 월드 좌표 (거기에 메모를 추가하려고 기억해둠)
+let quickMenuGroupId = null; // 그룹 영역 안에서 열렸다면 그 그룹 id (여기서 만드는 메모는 바로 그 그룹에 편입된다)
 
-function openQuickMenu(clientX, clientY, worldPos) {
+function openQuickMenu(clientX, clientY, worldPos, groupId = null) {
   quickMenuWorldPos = worldPos;
+  quickMenuGroupId = groupId;
   updateShapeUIHighlight();
+
+  if (quickMenuGroupId) {
+    const group = getGroup(quickMenuGroupId);
+    quickMenuGroupHintEl.hidden = false;
+    quickMenuGroupHintEl.textContent = group ? `"${group.name}" 그룹에 추가됨` : "";
+  } else {
+    quickMenuGroupHintEl.hidden = true;
+  }
+
   quickMenuEl.hidden = false;
 
   // 화면 밖으로 나가지 않도록, 실제 크기를 잰 뒤 위치를 보정한다.
@@ -2793,6 +2895,7 @@ function openQuickMenu(clientX, clientY, worldPos) {
 function closeQuickMenu() {
   quickMenuEl.hidden = true;
   quickMenuWorldPos = null;
+  quickMenuGroupId = null;
 }
 
 quickMenuEl.addEventListener("click", (e) => {
@@ -2801,7 +2904,7 @@ quickMenuEl.addEventListener("click", (e) => {
 
   if (btn.dataset.action === "create" && quickMenuWorldPos) {
     const p = quickMenuWorldPos;
-    const el = createNote(p.x - DEFAULT_NOTE_W / 2, p.y - DEFAULT_NOTE_H / 2, "", nextShape);
+    const el = createNote(p.x - DEFAULT_NOTE_W / 2, p.y - DEFAULT_NOTE_H / 2, "", nextShape, quickMenuGroupId);
     el.querySelector(".note-text").focus();
   } else if (btn.dataset.shape) {
     setNextShape(btn.dataset.shape);
@@ -2824,9 +2927,10 @@ document.addEventListener("mousedown", (e) => {
 // 브라우저 기본 메뉴는 항상 막는다.
 canvas.addEventListener("contextmenu", (e) => {
   e.preventDefault();
-  if (e.target !== canvas) return;
+  if (e.target !== canvas) return; // #world 는 0x0 크기라, 그룹 박스(pointer-events:none) 위여도 e.target 은 그대로 canvas
   const worldPos = screenToWorld(e.clientX, e.clientY);
-  openQuickMenu(e.clientX, e.clientY, worldPos);
+  const group = groupAtWorldPoint(worldPos); // 그 자리가 어느 그룹의 영역 안이면, 새 메모를 거기 바로 편입시킨다
+  openQuickMenu(e.clientX, e.clientY, worldPos, group ? group.id : null);
 });
 
 // 화면 이동(팬): 휠(가운데) 버튼 드래그, 또는 Ctrl + 왼쪽 버튼 드래그.

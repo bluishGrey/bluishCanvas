@@ -116,6 +116,13 @@ body {
   line-height: 1;
 }
 
+/* 다른 도형을 드래그해서 이 그룹 이름표 위로 가져왔을 때("여기 놓으면 이 그룹에
+   들어감") 표시. 이름표 자체가 이미 진한 색이라 흰색 점선으로 대비를 준다. */
+.group-label.drop-target {
+  outline: 2px dashed #fff;
+  outline-offset: 2px;
+}
+
 .group-ungroup-btn {
   border: none;
   background: none;
@@ -984,6 +991,13 @@ body {
   padding: 8px 10px 2px;
   font-size: 11px;
   color: #9aa7bd;
+}
+
+.quick-menu-group-hint {
+  padding: 4px 10px 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
 }
 
 .quick-menu-separator {
