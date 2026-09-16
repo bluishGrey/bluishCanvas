@@ -46,6 +46,7 @@ const mermaidPopup = document.getElementById("mermaid-popup");
 const mermaidCloseBtn = document.getElementById("mermaid-close-btn");
 const mermaidWarningsEl = document.getElementById("mermaid-warnings");
 const mermaidBlocksEl = document.getElementById("mermaid-blocks");
+const groupContextMenuEl = document.getElementById("group-context-menu");
 const helpBtn = document.getElementById("help-btn");
 const helpPopup = document.getElementById("help-popup");
 const helpCloseBtn = document.getElementById("help-close-btn");
@@ -75,6 +76,15 @@ const DEFAULT_BORDER_WIDTH = 1;
  * 이 기능이 생기기 전에 만든 메모는 전부 미지정으로 채워진다. */
 const DIAGRAM_TYPE_LABELS = { flowchart: "플로우차트", mindmap: "마인드맵" };
 const DEFAULT_DIAGRAM_TYPE = "flowchart";
+
+// 한글 단어 뒤에 "로/으로" 조사를 받침 유무에 맞게 붙인다("마인드맵" → "마인드맵으로",
+// "플로우차트" → "플로우차트로"). 완성형 한글 범위 밖의 글자로 끝나면 그냥 "로"를 붙인다.
+function withRoParticle(word) {
+  const code = word.charCodeAt(word.length - 1);
+  if (code < 0xac00 || code > 0xd7a3) return `${word}로`;
+  const hasBatchim = (code - 0xac00) % 28 !== 0;
+  return hasBatchim ? `${word}으로` : `${word}로`;
+}
 
 const view = { x: 0, y: 0, scale: 1 };
 let notes = [];
@@ -1994,12 +2004,12 @@ function removeNoteFromItsGroup(noteId) {
   }
 }
 
-/* 올가미로 잡은 도형들을 그룹으로 만든다.
+/* 아직 어떤 그룹에도 속하지 않은 도형들만으로 새 그룹(들)을 만든다.
  * 타입이 섞여 있으면 타입별로 나눠서 그룹을 여러 개 만든다 — 하나로 합치면 사용자가
  * 명시적으로 지정해둔 타입을 몰래 바꾸게 되기 때문. 다만 "미지정"은 명시적 선택이 아니라
  * 아직 안 정한 상태이므로, 멤버가 더 많은 쪽에 흡수시키면서 그 타입을 부여한다
  * (동수이거나 타입이 지정된 도형이 하나도 없으면 현재 선택된 nextDiagramType 을 쓴다). */
-function createGroupsFromNoteIds(noteIds) {
+function createNewGroupsFromUngroupedNotes(noteIds) {
   const buckets = { flowchart: [], mindmap: [] };
   const unsetIds = [];
 
@@ -2030,14 +2040,70 @@ function createGroupsFromNoteIds(noteIds) {
   ["flowchart", "mindmap"].forEach((type) => {
     const ids = buckets[type];
     if (ids.length === 0) return;
-    // 중첩은 없다: 이미 다른 그룹에 속해 있었다면 거기서 빼고 새 그룹으로 옮긴다.
-    ids.forEach(removeNoteFromItsGroup);
     const gid = nextGroupId++;
-    const group = { id: `g${gid}`, name: `그룹 ${gid}`, noteIds: ids };
+    const group = { id: `g${gid}`, name: `그룹 ${gid}`, noteIds: ids, locked: false };
     groups.push(group);
     created.push(group);
   });
   return created;
+}
+
+/* 올가미로 잡은 도형들을 그룹으로 정리한다. 이미 그룹에 속한 도형이 섞여 있는지에
+ * 따라 동작이 갈린다:
+ *   - 전부 미배정(어떤 그룹에도 안 속함) → createNewGroupsFromUngroupedNotes 로 새로 만든다.
+ *   - 기존 그룹이 하나만 걸림 → 새 그룹을 만들지 않고, 같이 잡힌 미배정 도형만 그 그룹에 편입.
+ *   - 서로 다른 기존 그룹이 여러 개 걸림 → 멤버가 가장 많은 그룹으로 나머지를 전부 합친다
+ *     (작은 쪽 그룹은 removeNoteFromItsGroup 이 멤버를 다 옮기고 나면 자동으로 사라진다).
+ * 잠긴 그룹은 이번 동작에서 완전히 빠진다 — 그 멤버는 추가/제거/병합 대상이 되지 않는다. */
+function createGroupsFromNoteIds(noteIds) {
+  const touchedGroups = [];
+  const lockedNoteIds = new Set();
+  noteIds.forEach((id) => {
+    const g = groupOfNote(id);
+    if (!g) return;
+    if (g.locked) {
+      lockedNoteIds.add(id);
+    } else if (!touchedGroups.includes(g)) {
+      touchedGroups.push(g);
+    }
+  });
+  const workingIds = noteIds.filter((id) => !lockedNoteIds.has(id));
+
+  if (touchedGroups.length === 0) {
+    return createNewGroupsFromUngroupedNotes(workingIds);
+  }
+
+  // 여러 그룹이 걸렸으면 멤버가 가장 많은 쪽(동수면 먼저 발견된 쪽)으로 합친다.
+  let target = touchedGroups[0];
+  touchedGroups.forEach((g) => {
+    if (g.noteIds.length > target.noteIds.length) target = g;
+  });
+
+  const hostType = groupDiagramType(target) || nextDiagramType;
+
+  workingIds.forEach((id) => {
+    if (target.noteIds.includes(id)) return; // 이미 이 그룹 멤버
+    const note = getNote(id);
+    if (!note) return;
+
+    if (groupOfNote(id)) {
+      // 다른(타깃이 아닌) 기존 그룹의 멤버 — 그룹끼리의 병합이므로 무조건 옮긴다.
+      // (그룹에 속한 도형의 타입은 항상 그 그룹을 따라가지, 개별적으로 "명시적 선택"을
+      // 갖고 있다고 보지 않기 때문.)
+      removeNoteFromItsGroup(id);
+      note.diagramType = hostType;
+      target.noteIds.push(id);
+      return;
+    }
+
+    // 그룹에 속하지 않은 낱개 도형: 미지정이면 흡수하고, 이미 다른 타입이 명시돼
+    // 있으면 그 선택을 몰래 바꾸지 않도록 이번엔 건드리지 않고 넘어간다.
+    if (note.diagramType && note.diagramType !== hostType) return;
+    note.diagramType = hostType;
+    target.noteIds.push(id);
+  });
+
+  return [target];
 }
 
 // 다각형(월드 좌표) 안에 점이 들어있는지 — ray casting.
@@ -2113,12 +2179,32 @@ function renderGroups() {
 
     const box = document.createElement("div");
     box.className = "group-box";
+    box.classList.toggle("locked", !!group.locked);
     box.dataset.id = group.id;
     box.dataset.diagramType = groupDiagramType(group) || "none";
     applyGroupBoxBounds(box, bounds);
 
+    box.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation(); // 캔버스의 빈 곳 우클릭 퀵메뉴가 대신 뜨지 않도록
+      openGroupContextMenu(e.clientX, e.clientY, group.id);
+    });
+
     const label = document.createElement("div");
     label.className = "group-label";
+    label.addEventListener("contextmenu", (e) => {
+      e.preventDefault();
+      e.stopPropagation();
+      openGroupContextMenu(e.clientX, e.clientY, group.id);
+    });
+
+    if (group.locked) {
+      const lockIcon = document.createElement("span");
+      lockIcon.className = "group-lock-icon";
+      lockIcon.textContent = "🔒";
+      lockIcon.title = "잠긴 그룹 — 도형 추가/제거/이동 불가";
+      label.appendChild(lockIcon);
+    }
 
     const nameEl = document.createElement("span");
     nameEl.className = "group-name";
@@ -2192,6 +2278,159 @@ function startGroupRenaming(nameEl, group) {
   });
   input.addEventListener("blur", commit);
 }
+
+/* ----- 그룹 우클릭 메뉴에서 실행되는 동작들 ----- */
+
+function selectGroupMembers(groupId) {
+  const group = getGroup(groupId);
+  if (!group) return;
+  setSelection(group.noteIds.slice());
+}
+
+// 그룹의 도형+화살표(그룹 안에서 양 끝이 다 그 그룹 멤버인 것만)+상대 위치를 그대로
+// 복사해서 원본 오른쪽에 새로 놓는다. 새 도형/화살표/그룹은 전부 새 id 를 받는 별개의
+// 그룹이다.
+function duplicateGroup(groupId) {
+  const group = getGroup(groupId);
+  if (!group) return;
+  const bounds = groupBounds(group);
+  const offsetX = bounds ? bounds.w + 40 : 220;
+
+  const idMap = new Map();
+  const newNoteIds = [];
+  group.noteIds.forEach((oldId) => {
+    const note = getNote(oldId);
+    if (!note) return;
+    const newNote = { ...note, id: nextId++, x: note.x + offsetX };
+    notes.push(newNote);
+    renderNote(newNote);
+    idMap.set(oldId, newNote.id);
+    newNoteIds.push(newNote.id);
+  });
+
+  const memberIdSet = new Set(group.noteIds);
+  arrows
+    .filter((a) => memberIdSet.has(a.fromId) && memberIdSet.has(a.toId))
+    .forEach((a) => {
+      const newArrow = { ...a, id: nextArrowId++, fromId: idMap.get(a.fromId), toId: idMap.get(a.toId) };
+      arrows.push(newArrow);
+      renderArrow(newArrow);
+    });
+
+  const gid = nextGroupId++;
+  const newGroup = { id: `g${gid}`, name: `${group.name} 사본`, noteIds: newNoteIds, locked: false };
+  groups.push(newGroup);
+
+  renderGroups();
+  setSelection(newNoteIds);
+  commitChange();
+}
+
+// 그룹 전체의 다이어그램 타입을 바꾼다. 마인드맵으로 바꿀 때는 그룹 안(양 끝이 다
+// 멤버인) 화살표가 트리(중심 하나, 순환 없음)인지 먼저 검사하고, 아니면 바꾸지 않고
+// 이유를 알려준다 — buildMindmapTree 는 Mermaid 내보내기가 이미 쓰는 것과 같은 검사다.
+function convertGroupType(groupId, type) {
+  const group = getGroup(groupId);
+  if (!group) return;
+  if (groupDiagramType(group) === type) return; // 이미 그 타입이면 할 일 없음
+
+  if (type === "mindmap") {
+    const memberIdSet = new Set(group.noteIds);
+    const groupArrows = arrows.filter((a) => memberIdSet.has(a.fromId) && memberIdSet.has(a.toId));
+    const tree = buildMindmapTree(group, groupArrows);
+    if (tree.error) {
+      alert(`마인드맵으로 전환할 수 없습니다 — ${tree.error}`);
+      return;
+    }
+  }
+
+  group.noteIds.forEach((id) => {
+    const note = getNote(id);
+    if (!note) return;
+    note.diagramType = type;
+    updateNoteStyleDOM(note);
+  });
+  renderGroups();
+  updateStylePanel();
+  commitChange();
+}
+
+function toggleGroupLock(groupId) {
+  const group = getGroup(groupId);
+  if (!group) return;
+  group.locked = !group.locked;
+  renderGroups();
+  commitChange();
+}
+
+/* ----- 그룹 우클릭 메뉴 (박스/이름표 우클릭으로 열림) ----- */
+
+let groupContextMenuGroupId = null;
+
+function openGroupContextMenu(clientX, clientY, groupId) {
+  const group = getGroup(groupId);
+  if (!group) return;
+  groupContextMenuGroupId = groupId;
+
+  const targetType = groupDiagramType(group) === "mindmap" ? "flowchart" : "mindmap";
+  const convertBtn = groupContextMenuEl.querySelector('[data-action="convert-type"]');
+  convertBtn.textContent = `${withRoParticle(DIAGRAM_TYPE_LABELS[targetType])} 전환`;
+  convertBtn.dataset.targetType = targetType;
+
+  const lockBtn = groupContextMenuEl.querySelector('[data-action="toggle-lock"]');
+  lockBtn.textContent = group.locked ? "잠금 해제" : "잠그기";
+
+  groupContextMenuEl.hidden = false;
+  // 화면 밖으로 나가지 않도록, 실제 크기를 잰 뒤 위치를 보정한다 (퀵메뉴와 같은 방식).
+  const menuRect = groupContextMenuEl.getBoundingClientRect();
+  const left = Math.min(clientX, window.innerWidth - menuRect.width - 8);
+  const top = Math.min(clientY, window.innerHeight - menuRect.height - 8);
+  groupContextMenuEl.style.left = `${Math.max(8, left)}px`;
+  groupContextMenuEl.style.top = `${Math.max(8, top)}px`;
+}
+
+function closeGroupContextMenu() {
+  groupContextMenuEl.hidden = true;
+  groupContextMenuGroupId = null;
+}
+
+groupContextMenuEl.addEventListener("click", (e) => {
+  const btn = e.target.closest(".quick-menu-item");
+  const groupId = groupContextMenuGroupId;
+  if (!btn || !groupId) return;
+
+  switch (btn.dataset.action) {
+    case "select-all":
+      selectGroupMembers(groupId);
+      break;
+    case "rename": {
+      const nameEl = groupsLayerEl.querySelector(`.group-box[data-id="${groupId}"] .group-name`);
+      const group = getGroup(groupId);
+      if (nameEl && group) startGroupRenaming(nameEl, group);
+      break;
+    }
+    case "convert-type":
+      convertGroupType(groupId, btn.dataset.targetType);
+      break;
+    case "duplicate":
+      duplicateGroup(groupId);
+      break;
+    case "toggle-lock":
+      toggleGroupLock(groupId);
+      break;
+    case "ungroup":
+      ungroup(groupId);
+      break;
+  }
+  closeGroupContextMenu();
+});
+
+// 메뉴 바깥에서 새로 뭔가를 누르면(클릭/드래그 시작) 메뉴를 닫는다 (퀵메뉴와 같은 방식).
+document.addEventListener("mousedown", (e) => {
+  if (!groupContextMenuEl.hidden && !groupContextMenuEl.contains(e.target)) {
+    closeGroupContextMenu();
+  }
+});
 
 /* ===== 메모 꾸미기 (사이드바 "꾸미기" 패널) =====
  * 배경색/글자크기/정렬/테두리굵기는 note 객체의 필드(bg/fontSize/textAlign/borderWidth)로
@@ -2405,7 +2644,15 @@ function makeNoteInteractive(el, note, textEl) {
       selectOnly(note.id);
     }
 
-    const draggedIds = Array.from(selectedIds);
+    // 잠긴 그룹에 속한 메모는 다중선택에 같이 걸려도 옮기지 않는다(선택은 그대로 둔다).
+    // 지금 누른 메모 자체가 잠긴 그룹 소속이면 draggedIds 가 비어서, 아래에서
+    // 드래그 추적 자체를 시작하지 않는다.
+    const draggedIds = Array.from(selectedIds).filter((id) => {
+      const g = groupOfNote(id);
+      return !(g && g.locked);
+    });
+    if (draggedIds.length === 0) return;
+
     const startPositions = draggedIds.map((id) => {
       const n = notes.find((nn) => nn.id === id);
       return { id, el: noteEl(id), x: n.x, y: n.y };
@@ -2875,6 +3122,10 @@ document.addEventListener("keydown", (e) => {
     }
     if (!quickMenuEl.hidden) {
       closeQuickMenu();
+      return;
+    }
+    if (!groupContextMenuEl.hidden) {
+      closeGroupContextMenu();
       return;
     }
     if (lassoMode) setLassoMode(false); // 올가미 모드에서 빠져나오기

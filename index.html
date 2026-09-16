@@ -231,9 +231,11 @@
         <h3>Mermaid 내보내기 (클로드와 주고받기)</h3>
         <ul>
           <li><b>Tab</b> 또는 우측 상단 토글 — 다음에 만들 도형의 다이어그램 타입(플로우차트/마인드맵) 전환</li>
-          <li><b>L</b> 또는 <b>◌ 올가미</b> — 올가미 모드. 도형들을 감싸면 하나의 그룹으로 묶인다(<b>Esc</b>로 해제). 타입이 섞여 있으면 타입별로 나뉘고, 타입 미지정 도형은 같이 묶인 쪽 타입을 따라간다</li>
+          <li><b>L</b> 또는 <b>◌ 올가미</b> — 올가미 모드(<b>Esc</b>로 해제). 감싼 도형이 전부 미배정이면 새 그룹이 생기고(타입이 섞여 있으면 타입별로 나뉨, 미지정 도형은 같이 묶인 쪽 타입을 따라감), 이미 있는 그룹의 도형이 걸리면 새로 만들지 않고 미배정 도형만 그 그룹에 편입되며, 서로 다른 그룹 여러 개가 걸리면 멤버가 더 많은 그룹으로 합쳐진다</li>
           <li>그룹 박스의 이름 <b>더블클릭</b> — 이름 변경(Mermaid 의 subgraph 이름이 된다), <b>×</b> — 그룹 해제</li>
-          <li>이미 만든 도형의 타입은 <b>꾸미기</b> 패널에서 변경(그룹에 속한 도형이면 그룹 전체가 함께 바뀐다)</li>
+          <li>그룹 <b>우클릭</b>(박스나 이름표) — 전체 선택 / 이름 변경 / 타입 전환(마인드맵 전환 시 트리가 아니면 거부) / 그룹 복제(도형+화살표+배치를 그대로 복사) / 잠그기·잠금 해제 / 그룹 해제</li>
+          <li>잠긴(<b>🔒</b>) 그룹은 올가미로 도형을 추가/제거할 수 없고, 그 도형은 드래그로 옮길 수도 없다</li>
+          <li>이미 만든 도형의 타입은 <b>꾸미기</b> 패널에서도 변경 가능(그룹에 속한 도형이면 그룹 전체가 함께 바뀐다)</li>
           <li><b>⤴ Mermaid</b> — 현재 페이지를 Mermaid 텍스트로 변환해 보여준다. 블록마다 <b>복사</b> 버튼이 있고, 변환에서 빠진 것이 있으면 위쪽에 알려준다</li>
           <li>마인드맵 그룹은 화살표가 하나의 중심에서 뻗어나가는 <b>트리</b>여야 한다(순환하거나 화살표가 두 개 들어오면 변환되지 않는다)</li>
         </ul>
@@ -257,6 +259,18 @@
     <button type="button" class="quick-menu-item shape-item" data-shape="rect">▭ 사각형</button>
     <button type="button" class="quick-menu-item shape-item" data-shape="ellipse">◯ 원</button>
     <button type="button" class="quick-menu-item shape-item" data-shape="diamond">◇ 마름모</button>
+  </div>
+
+  <!-- 그룹 박스/이름표 우클릭 시 뜨는 메뉴 -->
+  <div id="group-context-menu" hidden>
+    <button type="button" class="quick-menu-item" data-action="select-all">그룹 전체 선택</button>
+    <button type="button" class="quick-menu-item" data-action="rename">이름 변경</button>
+    <div class="quick-menu-separator"></div>
+    <button type="button" class="quick-menu-item" data-action="convert-type"></button>
+    <button type="button" class="quick-menu-item" data-action="duplicate">그룹 복제</button>
+    <button type="button" class="quick-menu-item" data-action="toggle-lock"></button>
+    <div class="quick-menu-separator"></div>
+    <button type="button" class="quick-menu-item" data-action="ungroup">그룹 해제</button>
   </div>
 
   <script src="app.js"></script>

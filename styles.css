@@ -83,6 +83,11 @@ body {
   background: rgba(45, 154, 100, 0.08);
 }
 
+/* 잠긴 그룹은 실선 테두리로 "여기는 고정돼 있다"는 느낌을 준다. */
+.group-box.locked {
+  border-style: solid;
+}
+
 /* 이름 라벨 + 해제 버튼만 클릭을 받는다 */
 .group-label {
   position: absolute;
@@ -104,6 +109,11 @@ body {
 
 .group-box[data-diagram-type="mindmap"] .group-label {
   background: rgba(45, 154, 100, 0.85);
+}
+
+.group-lock-icon {
+  font-size: 10px;
+  line-height: 1;
 }
 
 .group-ungroup-btn {
@@ -980,6 +990,20 @@ body {
   height: 1px;
   background: var(--note-border);
   margin: 4px 2px;
+}
+
+/* 그룹 우클릭 메뉴는 #quick-menu 와 같은 모양(.quick-menu-item 등 재사용)이라
+   위치 잡는 규칙만 따로 둔다. */
+#group-context-menu {
+  position: fixed;
+  min-width: 170px;
+  background: #fff;
+  border: 1px solid var(--note-border);
+  border-radius: 8px;
+  box-shadow: 0 8px 24px rgba(31, 39, 51, 0.18);
+  padding: 6px;
+  font-size: 13px;
+  z-index: 20;
 }
 
 /* ===== 좌측 사이드바: 페이지 / 폴더 트리 ===== */
