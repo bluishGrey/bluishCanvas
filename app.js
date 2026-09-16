@@ -33,6 +33,7 @@ const lastImportInfoEl = document.getElementById("last-import-info");
 const stylePanelEmptyEl = document.getElementById("style-panel-empty");
 const stylePanelBodyEl = document.getElementById("style-panel-body");
 const removeFromGroupBtn = document.getElementById("remove-from-group-btn");
+const groupDropHintEl = document.getElementById("group-drop-hint");
 const sidebarSearchInput = document.getElementById("sidebar-search-input");
 const canvasSearchEl = document.getElementById("canvas-search");
 const canvasSearchInput = document.getElementById("canvas-search-input");
@@ -2079,6 +2080,20 @@ function groupLabelUnderPoint(clientX, clientY, excludeEls) {
 
 function clearGroupDropHighlight() {
   groupsLayerEl.querySelectorAll(".group-label.drop-target").forEach((el) => el.classList.remove("drop-target"));
+  hideGroupDropHint();
+}
+
+// 그룹 이름표 위로 드래그 중일 때 커서 옆에 "OO 그룹에 추가" 배지를 띄운다.
+// 시선이 옮기는 도형에 가 있어도 놓치지 않도록 이름표 자체 강조와 같이 쓴다.
+function showGroupDropHint(clientX, clientY, groupName) {
+  groupDropHintEl.textContent = `"${groupName}" 그룹에 추가`;
+  groupDropHintEl.style.left = `${clientX + 16}px`;
+  groupDropHintEl.style.top = `${clientY + 16}px`;
+  groupDropHintEl.hidden = false;
+}
+
+function hideGroupDropHint() {
+  groupDropHintEl.hidden = true;
 }
 
 /* 아직 어떤 그룹에도 속하지 않은 도형들만으로 새 그룹(들)을 만든다.
@@ -2839,11 +2854,15 @@ function makeNoteInteractive(el, note, textEl) {
       updateGroupBoxGeometry();
 
       // 드래그 중인 도형(들) 아래로 다른 그룹의 이름표가 지나가면, 여기 놓으면
-      // 그 그룹에 들어간다는 걸 살짝 강조해서 보여준다.
+      // 그 그룹에 들어간다는 걸 이름표 강조 + 커서 옆 배지로 보여준다.
       const draggedEls = startPositions.map((p) => p.el);
       const hoverLabel = groupLabelUnderPoint(ev.clientX, ev.clientY, draggedEls);
       clearGroupDropHighlight();
-      if (hoverLabel) hoverLabel.classList.add("drop-target");
+      if (hoverLabel) {
+        hoverLabel.classList.add("drop-target");
+        const hoverGroup = getGroup(hoverLabel.closest(".group-box").dataset.id);
+        if (hoverGroup) showGroupDropHint(ev.clientX, ev.clientY, hoverGroup.name);
+      }
     };
 
     const onUp = (ev) => {

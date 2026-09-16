@@ -105,6 +105,7 @@ body {
   white-space: nowrap;
   pointer-events: auto;
   cursor: text;
+  transition: transform 0.1s, box-shadow 0.1s;
 }
 
 .group-box[data-diagram-type="mindmap"] .group-label {
@@ -117,10 +118,34 @@ body {
 }
 
 /* 다른 도형을 드래그해서 이 그룹 이름표 위로 가져왔을 때("여기 놓으면 이 그룹에
-   들어감") 표시. 이름표 자체가 이미 진한 색이라 흰색 점선으로 대비를 준다. */
+   들어감") 표시. 이름표 자체가 이미 진한 색이라 흰색 점선 + 살짝 커지는 것으로
+   눈에 띄게 대비를 준다(드래그 중엔 시선이 옮기는 도형에 있어서, 옅은 표시는
+   놓치기 쉽다). 커서 옆에도 같은 정보를 보여주는 #group-drop-hint 를 같이 쓴다. */
 .group-label.drop-target {
   outline: 2px dashed #fff;
   outline-offset: 2px;
+  box-shadow: 0 0 0 4px rgba(255, 255, 255, 0.35);
+  transform: scale(1.15);
+}
+
+/* 그룹 이름표 위로 드래그 중일 때 커서 옆에 뜨는 "여기에 추가됨" 배지.
+   시선이 옮기는 도형에 가 있어도 바로 보이도록 커서를 따라다닌다. */
+#group-drop-hint {
+  position: fixed;
+  pointer-events: none;
+  z-index: 25;
+  padding: 4px 10px;
+  border-radius: 999px;
+  background: var(--accent);
+  color: #fff;
+  font-size: 11.5px;
+  font-weight: 600;
+  white-space: nowrap;
+  box-shadow: 0 4px 14px rgba(31, 39, 51, 0.3);
+}
+
+#group-drop-hint[hidden] {
+  display: none;
 }
 
 .group-ungroup-btn {
