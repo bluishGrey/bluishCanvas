@@ -2323,17 +2323,23 @@ function renderGroups() {
     groupsLayerEl.appendChild(box);
   });
 
-  updateNoteGroupButtons();
+  updateNoteGroupUI();
 }
 
 // 각 메모의 "그룹에서 빼기"(−) 버튼을 지금 그룹 소속 상태에 맞게 보이기/숨기기/
 // 잠금에 따라 비활성화한다. renderGroups() 가 그룹 구조가 바뀔 때마다 이미 호출되고
 // 있으므로(올가미/드래그편입/우클릭생성/해제/잠금/복제 등), 여기 얹어두면 모든
 // 경로에서 따로 챙기지 않아도 버튼 상태가 항상 맞아떨어진다.
-function updateNoteGroupButtons() {
+// "그룹에서 빼기" 버튼 상태뿐 아니라, note.diagramType 이 여기서(올가미/드래그편입/
+// 우클릭생성/타입전환 등) 직접 바뀌고 DOM 은 아직 안 따라온 경우를 위해 모서리 둥글기용
+// data-diagram-type 속성도 같이 맞춘다 — renderGroups() 가 그룹 구조가 바뀌는 모든
+// 경로에서 이미 호출되고 있어서, 여기 얹어두면 새 진입점마다 따로 챙기지 않아도 된다.
+function updateNoteGroupUI() {
   notes.forEach((note) => {
     const el = noteEl(note.id);
     if (!el) return;
+    el.dataset.diagramType = note.diagramType || "none";
+
     const btn = el.querySelector(".note-ungroup-btn");
     if (!btn) return;
     const group = groupOfNote(note.id);
@@ -2586,6 +2592,10 @@ document.addEventListener("mousedown", (e) => {
 // 얹어두고 styles.css 쪽에서 도형별 규칙이 각자 그 변수를 참조하게 했다 — 그러면 여기서
 // 도형이 뭔지 따로 분기할 필요가 없다.
 function applyNoteStyleToEl(el, textEl, note) {
+  // 다이어그램 타입에 따라 모서리 둥글기가 달라지므로(styles.css 의
+  // [data-diagram-type="mindmap"] 규칙들), CSS 가 반응할 수 있게 속성으로 얹어둔다.
+  el.dataset.diagramType = note.diagramType || "none";
+
   if (note.bg) {
     el.style.setProperty("--note-custom-bg", note.bg);
   } else {

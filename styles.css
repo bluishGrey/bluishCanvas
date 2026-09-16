@@ -12,6 +12,13 @@
   --accent: #3b6fd4;
   --text: #1f2733;
   --sidebar-w: 240px;
+  /* 마름모(diamond)는 clip-path 로 모양을 오려내는데, border-radius 가 안 먹혀서
+     "더 둥글게"를 표준 CSS 만으로 표현할 방법이 없다(clip-path: path() 로 진짜 곡선을
+     그리려면 절대 좌표가 필요해서, 크기가 자유롭게 바뀌는 메모에는 못 쓴다). 대신 꼭짓점
+     마다 양쪽으로 살짝 깎아낸 팔각형으로 "더 둥글어 보이게" 흉내낸다 — 전부 %(퍼센트)
+     좌표라 메모 크기가 어떻게 바뀌어도 그대로 비율을 유지한다. */
+  --diamond-clip: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  --diamond-clip-round: polygon(60% 10%, 90% 40%, 90% 60%, 60% 90%, 40% 90%, 10% 60%, 10% 40%, 40% 10%);
 }
 
 html,
@@ -63,7 +70,9 @@ body {
 
 /* ===== 그룹 박스 (월드 좌표 — #world 안에 있어서 팬/줌을 그대로 따라간다) =====
    메모 하나하나에 배지를 달면 화면이 어지러워지므로, 묶음 전체를 옅은 박스로만 감싼다.
-   타입은 배경색으로 구분한다(플로우차트=파랑 계열, 마인드맵=초록 계열). */
+   배경색은 타입과 무관하게 전부 동일하다 — "여기가 그룹 영역이다"만 나타낸다.
+   타입 구분은 대신 도형 자체의 모서리 둥글기(.note-shape)와 이름표 모양(.group-label)이
+   맡는다(플로우차트=직선 모서리, 마인드맵=둥근 모서리/캡슐). */
 #groups-layer {
   position: absolute;
   top: 0;
@@ -76,11 +85,6 @@ body {
   border: 1px dashed rgba(59, 111, 212, 0.45);
   background: rgba(59, 111, 212, 0.07);
   pointer-events: none; /* 박스가 메모 클릭/드래그를 가로채면 안 된다 */
-}
-
-.group-box[data-diagram-type="mindmap"] {
-  border-color: rgba(45, 154, 100, 0.45);
-  background: rgba(45, 154, 100, 0.08);
 }
 
 /* 잠긴 그룹은 실선 테두리로 "여기는 고정돼 있다"는 느낌을 준다. */
@@ -97,7 +101,7 @@ body {
   align-items: center;
   gap: 4px;
   padding: 1px 8px;
-  border-radius: 999px;
+  border-radius: 4px; /* 기본값: 플로우차트 — 직선에 가까운 모서리 */
   background: rgba(59, 111, 212, 0.85);
   color: #fff;
   font-size: 11px;
@@ -105,11 +109,12 @@ body {
   white-space: nowrap;
   pointer-events: auto;
   cursor: text;
-  transition: transform 0.1s, box-shadow 0.1s;
+  transition: transform 0.1s, box-shadow 0.1s, border-radius 0.1s;
 }
 
+/* 마인드맵 그룹의 이름표는 완전한 캡슐(pill) 모양 — 도형 쪽 둥근 모서리 규칙과 맞춘다. */
 .group-box[data-diagram-type="mindmap"] .group-label {
-  background: rgba(45, 154, 100, 0.85);
+  border-radius: 999px;
 }
 
 .group-lock-icon {
@@ -364,7 +369,7 @@ body {
 .note.selected[data-shape="diamond"] .note-ring {
   inset: -2px;
   background: rgba(59, 111, 212, 0.35);
-  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  clip-path: var(--diamond-clip);
 }
 
 /* 배경/테두리/그림자는 별도 레이어(.note-shape)가 맡는다. 마름모는 clip-path 로 모양을
@@ -384,6 +389,8 @@ body {
 .note[data-shape="ellipse"] .note-shape {
   border-radius: 50%;
 }
+/* 원은 이미 모서리가 없는(가장 둥근) 모양이라, 마인드맵 타입이어도 더 둥글게 만들
+   여지가 없다 — 그래서 ellipse 는 타입별 전용 규칙이 따로 없다(의도된 무변화). */
 
 /* 마름모: border 를 그대로 두고 clip-path 로 자르면, 뾰족한 꼭짓점에서
    테두리가 삐죽하게 튀어나오거나 끊겨 보인다 (border 는 원래 사각형 네 모서리를
@@ -397,7 +404,7 @@ body {
   border: none;
   border-radius: 0;
   background: var(--note-border);
-  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  clip-path: var(--diamond-clip);
   box-shadow: none;
   filter: drop-shadow(0 4px 14px rgba(31, 39, 51, 0.12));
 }
@@ -410,7 +417,26 @@ body {
      많이 띄울수록 바깥쪽 테두리색이 더 두껍게 남아 보인다. */
   inset: var(--note-border-width, 1px);
   background: var(--note-custom-bg, var(--note-bg));
-  clip-path: polygon(50% 0%, 100% 50%, 50% 100%, 0% 50%);
+  clip-path: var(--diamond-clip);
+}
+
+/* ===== 다이어그램 타입에 따른 모서리 둥글기 =====
+   플로우차트=직선 모서리(기본값 그대로), 마인드맵=더 둥글게. 사각형은 border-radius 를
+   아주 크게 줘서 캡슐(pill)에 가깝게, 마름모는 clip-path 를 8각형(--diamond-clip-round)
+   으로 바꿔서 꼭짓점을 깎아 "둥글어 보이게" 만든다. 항상 [data-shape=...] 를 같이 써서
+   특정도(specificity)를 동률로 만들지 않고 명시적으로 구분한다(캐스케이드 순서에 기대지
+   않기 위함 — 그래야 나중에 규칙 순서가 바뀌어도 원 모양이 실수로 깨지지 않는다). */
+.note[data-shape="rect"][data-diagram-type="mindmap"] .note-shape {
+  border-radius: 999px;
+}
+
+.note[data-shape="diamond"][data-diagram-type="mindmap"] .note-shape,
+.note[data-shape="diamond"][data-diagram-type="mindmap"] .note-shape::after {
+  clip-path: var(--diamond-clip-round);
+}
+
+.note.selected[data-shape="diamond"][data-diagram-type="mindmap"] .note-ring {
+  clip-path: var(--diamond-clip-round);
 }
 
 .note.dragging .note-shape {
