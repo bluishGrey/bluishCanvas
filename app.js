@@ -32,6 +32,7 @@ const lastExportInfoEl = document.getElementById("last-export-info");
 const lastImportInfoEl = document.getElementById("last-import-info");
 const stylePanelEmptyEl = document.getElementById("style-panel-empty");
 const stylePanelBodyEl = document.getElementById("style-panel-body");
+const removeFromGroupBtn = document.getElementById("remove-from-group-btn");
 const sidebarSearchInput = document.getElementById("sidebar-search-input");
 const canvasSearchEl = document.getElementById("canvas-search");
 const canvasSearchInput = document.getElementById("canvas-search-input");
@@ -966,6 +967,8 @@ document.querySelectorAll("#style-panel-body [data-style-field]").forEach((row) 
     });
   });
 });
+
+removeFromGroupBtn.addEventListener("click", removeSelectedNotesFromGroups);
 
 /* ===== 사이드바 접기 / 펼치기 ===== */
 
@@ -2304,6 +2307,27 @@ function renderGroups() {
     box.appendChild(label);
     groupsLayerEl.appendChild(box);
   });
+
+  updateNoteGroupButtons();
+}
+
+// 각 메모의 "그룹에서 빼기"(−) 버튼을 지금 그룹 소속 상태에 맞게 보이기/숨기기/
+// 잠금에 따라 비활성화한다. renderGroups() 가 그룹 구조가 바뀔 때마다 이미 호출되고
+// 있으므로(올가미/드래그편입/우클릭생성/해제/잠금/복제 등), 여기 얹어두면 모든
+// 경로에서 따로 챙기지 않아도 버튼 상태가 항상 맞아떨어진다.
+function updateNoteGroupButtons() {
+  notes.forEach((note) => {
+    const el = noteEl(note.id);
+    if (!el) return;
+    const btn = el.querySelector(".note-ungroup-btn");
+    if (!btn) return;
+    const group = groupOfNote(note.id);
+    btn.hidden = !group;
+    if (group) {
+      btn.disabled = !!group.locked;
+      btn.title = group.locked ? "잠긴 그룹은 도형을 뺄 수 없습니다" : "그룹에서 빼기";
+    }
+  });
 }
 
 // 그룹만 없애고 도형은 그대로 둔다(도형의 다이어그램 타입도 유지).
@@ -2434,6 +2458,37 @@ function toggleGroupLock(groupId) {
   if (!group) return;
   group.locked = !group.locked;
   renderGroups();
+  commitChange();
+}
+
+/* ----- 그룹에서 도형 빼기 (도형 자체는 삭제되지 않는다) =====
+ * 그룹 박스가 멤버 위치에 맞춰 자동으로 다시 계산되는 방식이라(groupBounds), 드래그로
+ * 그룹 밖으로 빼내려 해도 박스가 같이 늘어나며 따라와서 "밖으로" 나갈 수가 없다.
+ * 그래서 드래그가 아니라 명시적인 버튼(메모 자체의 −버튼 / 꾸미기 패널)으로만 뺀다. */
+
+// 메모 하나에 달린 "그룹에서 빼기" 버튼 — 잠긴 그룹이면 버튼이 비활성 상태라
+// 여기까지 클릭이 오지 않지만, 혹시 모를 경우를 대비해 한 번 더 확인한다.
+function removeNoteFromGroupAction(noteId) {
+  const group = groupOfNote(noteId);
+  if (!group || group.locked) return;
+  removeNoteFromItsGroup(noteId); // 멤버가 0개가 되면 여기서 그룹 자체도 같이 사라진다
+  renderGroups();
+  commitChange();
+}
+
+// 꾸미기 패널의 "그룹에서 빼기" — 지금 선택된 것들 중 (잠기지 않은) 그룹에 속한
+// 것만 전부 뺀다. 선택된 것 중 그룹에 안 속한 도형이나 잠긴 그룹 소속은 그냥 둔다.
+function removeSelectedNotesFromGroups() {
+  let removedAny = false;
+  selectedIds.forEach((id) => {
+    const group = groupOfNote(id);
+    if (!group || group.locked) return;
+    removeNoteFromItsGroup(id);
+    removedAny = true;
+  });
+  if (!removedAny) return;
+  renderGroups();
+  updateStylePanel();
   commitChange();
 }
 
@@ -2598,6 +2653,13 @@ function updateStylePanel() {
   setStyleButtonRowActive("borderWidth", first.borderWidth ?? DEFAULT_BORDER_WIDTH);
   // 미지정(null)은 버튼의 data-value="none" 과 짝지어 표시한다.
   setStyleButtonRowActive("diagramType", first.diagramType || "none");
+
+  // 선택된 것 중 (잠기지 않은) 그룹에 속한 도형이 하나라도 있을 때만 눌리게 한다.
+  const canRemoveFromGroup = Array.from(selectedIds).some((id) => {
+    const group = groupOfNote(id);
+    return group && !group.locked;
+  });
+  removeFromGroupBtn.disabled = !canRemoveFromGroup;
 }
 
 function renderNote(note) {
@@ -2646,6 +2708,22 @@ function renderNote(note) {
     }
   });
 
+  // 삭제(×) 버튼 왼쪽에 자리하는 "그룹에서 빼기" 버튼. 이 메모가 그룹에 속해 있을
+  // 때만 보인다(updateNoteGroupButtons 가 hidden/disabled 를 관리) — 처음 그릴 땐
+  // 아직 어느 그룹에도 없는 채로 시작하므로 기본은 숨김이다.
+  const ungroupBtn = document.createElement("button");
+  ungroupBtn.type = "button";
+  ungroupBtn.className = "note-ungroup-btn";
+  ungroupBtn.setAttribute("aria-label", "그룹에서 빼기");
+  ungroupBtn.title = "그룹에서 빼기";
+  ungroupBtn.textContent = "−";
+  ungroupBtn.hidden = true;
+  ungroupBtn.addEventListener("mousedown", (e) => e.stopPropagation());
+  ungroupBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    removeNoteFromGroupAction(note.id);
+  });
+
   const deleteBtn = document.createElement("button");
   deleteBtn.type = "button";
   deleteBtn.className = "note-delete-btn";
@@ -2659,6 +2737,7 @@ function renderNote(note) {
   });
 
   el.appendChild(textEl);
+  el.appendChild(ungroupBtn);
   el.appendChild(deleteBtn);
   world.appendChild(el);
   makeNoteInteractive(el, note, textEl);

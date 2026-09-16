@@ -444,6 +444,48 @@ body {
   border-color: #d64545;
 }
 
+/* 삭제(×) 버튼 왼쪽 자리. hidden 속성은 JS(updateNoteGroupButtons)가 그룹 소속
+   여부에 따라 관리하고, 여기서는 hidden 이 아닐 때 hover 로 나타나는 것만 맡는다. */
+.note-ungroup-btn {
+  position: absolute;
+  top: 4px;
+  right: 26px;
+  width: 18px;
+  height: 18px;
+  border: 1px solid var(--note-border);
+  border-radius: 50%;
+  background: #fff;
+  color: #55617a;
+  font-size: 13px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 0.12s, color 0.12s, border-color 0.12s;
+}
+
+.note:hover .note-ungroup-btn:not([hidden]) {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.note-ungroup-btn:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+.note-ungroup-btn:disabled {
+  cursor: not-allowed;
+}
+
+.note-ungroup-btn:disabled:hover {
+  color: #55617a;
+  border-color: var(--note-border);
+}
+
 .note-text {
   /* position:absolute + inset 로 크기를 잡는다 (position:relative 아닌 이유는 아래 참고).
      상하좌우 inset 을 도형별로 다르게 줘서, 원/마름모에서 텍스트 영역이 도형보다
@@ -1196,6 +1238,21 @@ body {
 .sidebar-footer-btn:hover {
   border-color: var(--accent);
   color: var(--accent);
+}
+
+#remove-from-group-btn {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+#remove-from-group-btn:disabled {
+  cursor: not-allowed;
+  opacity: 0.5;
+}
+
+#remove-from-group-btn:disabled:hover {
+  border-color: var(--note-border);
+  color: #55617a;
 }
 
 .tree-row {
