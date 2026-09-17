@@ -1354,31 +1354,144 @@ function arrowEl(id) {
   return arrowsLayerEl.querySelector(`.arrow[data-id="${id}"]`);
 }
 
-// 메모의 상/하/좌/우 중앙 4개 연결 지점 중 하나의 월드 좌표.
-function sideMidpoint(note, side) {
-  const cx = note.x + note.w / 2;
-  const cy = note.y + note.h / 2;
-  switch (side) {
-    case "top":
-      return { x: cx, y: note.y };
-    case "bottom":
-      return { x: cx, y: note.y + note.h };
-    case "left":
-      return { x: note.x, y: cy };
-    default:
-      return { x: note.x + note.w, y: cy };
-  }
+/* ===== 화살표 연결 지점: 경계 상자가 아니라 실제 도형 윤곽 기준 =====
+ * Mermaid 가 실제로 그리는 방식과 비슷하게, 두 도형의 중심을 잇는 직선이 각 도형의
+ * "진짜 윤곽"(사각형 변, 마름모의 대각선 변, 육각형 변, 평행사변형의 빗변 등)과 만나는
+ * 정확한 지점에서 화살표가 시작/끝나도록 한다 — 예전의 "상/하/좌/우 4개 고정 지점 중
+ * 하나" 방식과 달리, 각도에 따라 그 변의 어느 지점이든 자연스럽게 연결점이 된다.
+ *
+ * 도형은 두 갈래로 나눠 계산한다: 다각형인 5종(단계/분기/준비·설정/입력/출력)은 전부
+ * 같은 "다각형 변과 반직선의 교차" 알고리즘 하나를 쓰고(윤곽 정점만 도형마다 다름 —
+ * 이 정점들은 styles.css 의 clip-path 폴리곤과 정확히 같은 좌표다), 시작/끝(스타디움)
+ * 만 원호 두 개 + 직선 두 개로 된 별도 모양이라 따로 계산한다. */
+
+// 도형별 윤곽 정점(0~1 비율, 가로/세로 각각). rect 는 그냥 경계 상자 네 모서리다 —
+// 실제 border-radius(10px)는 무시한다(Mermaid 자체도 사각형 연결점 계산에서 모서리
+// 둥글기까지는 안 따진다). --xxx-clip CSS 변수들과 정확히 같은 좌표를 쓴다.
+const SHAPE_OUTLINE_POLYGONS = {
+  rect: [[0, 0], [1, 0], [1, 1], [0, 1]],
+  diamond: [[0.5, 0], [1, 0.5], [0.5, 1], [0, 0.5]],
+  hexagon: [[0.25, 0], [0.75, 0], [1, 0.5], [0.75, 1], [0.25, 1], [0, 0.5]],
+  parallelogram: [[0.15, 0], [1, 0], [0.85, 1], [0, 1]],
+  "parallelogram-rev": [[0, 0], [0.85, 0], [1, 1], [0.15, 1]],
+};
+
+function cross2d(ax, ay, bx, by) {
+  return ax * by - ay * bx;
 }
 
-// from 이 to 를 향해 연결될 때 가장 자연스러운 변(상/하/좌/우)을 고른다.
-// 두 중심점의 상대 위치에서, 더 크게 벌어진 축(가로 vs 세로) 쪽 변을 쓴다.
-function chooseSide(from, to) {
-  const dx = to.x + to.w / 2 - (from.x + from.w / 2);
-  const dy = to.y + to.h / 2 - (from.y + from.h / 2);
-  if (Math.abs(dx) > Math.abs(dy)) {
-    return dx > 0 ? "right" : "left";
+// 반직선 (ox,oy)+t*(dx,dy), t>0 이 선분 (ax,ay)-(bx,by) 와 만나는 지점. 안 만나면 null.
+function raySegmentIntersect(ox, oy, dx, dy, ax, ay, bx, by) {
+  const segX = bx - ax;
+  const segY = by - ay;
+  const denom = cross2d(dx, dy, segX, segY);
+  if (Math.abs(denom) < 1e-9) return null; // 평행(또는 반직선이 선분과 같은 방향)
+  const diffX = ax - ox;
+  const diffY = ay - oy;
+  const t = cross2d(diffX, diffY, segX, segY) / denom;
+  const u = cross2d(diffX, diffY, dx, dy) / denom;
+  if (t <= 0 || u < 0 || u > 1) return null;
+  return { t, x: ox + t * dx, y: oy + t * dy };
+}
+
+// w×h 박스 안의 다각형(0~1 비율 정점) 윤곽과, 박스 중심에서 (dx,dy) 방향 반직선의
+// 교차점을 로컬 좌표(0~w, 0~h)로 돌려준다. 볼록 다각형이고 중심이 내부에 있으므로
+// 정확히 한 변과 만나는 게 정상이지만, 혹시 여러 후보가 걸리면 가장 가까운(t 최소) 것을 쓴다.
+function polygonRayIntersect(w, h, polygon, dx, dy) {
+  const cx = w / 2;
+  const cy = h / 2;
+  let best = null;
+  let bestT = Infinity;
+  for (let i = 0; i < polygon.length; i++) {
+    const a = polygon[i];
+    const b = polygon[(i + 1) % polygon.length];
+    const hit = raySegmentIntersect(cx, cy, dx, dy, a[0] * w, a[1] * h, b[0] * w, b[1] * h);
+    if (hit && hit.t < bestT) {
+      bestT = hit.t;
+      best = hit;
+    }
   }
-  return dy > 0 ? "bottom" : "top";
+  return best ? { x: best.x, y: best.y } : { x: cx, y: cy };
+}
+
+// 시작/끝(스타디움) 전용: border-radius:999px 는 반지름을 min(w,h)/2 로 clamp 하므로,
+// 그 반지름의 반원 두 개 + 그 사이를 잇는 직선 두 개로 이뤄진 모양이다 — 가로가 길면
+// 좌우가 반원(수평 알약), 세로가 길면 위아래가 반원(수직 알약, 자동 높이조정으로 글이
+// 많아져 세로가 더 길어지는 경우도 실제로 있어서 방향을 가정하지 않고 매번 계산한다).
+function stadiumRayIntersect(w, h, dx, dy) {
+  const cx = w / 2;
+  const cy = h / 2;
+  const r = Math.min(w, h) / 2;
+  const horizontal = w >= h;
+  let best = null;
+  let bestT = Infinity;
+  const consider = (t, x, y) => {
+    if (t > 0 && t < bestT) {
+      bestT = t;
+      best = { x, y };
+    }
+  };
+  const considerCircle = (ccx, ccy, farSide) => {
+    const lx = cx - ccx;
+    const ly = cy - ccy;
+    const a = dx * dx + dy * dy;
+    if (a < 1e-9) return;
+    const b = 2 * (lx * dx + ly * dy);
+    const c = lx * lx + ly * ly - r * r;
+    const disc = b * b - 4 * a * c;
+    if (disc < 0) return;
+    const sqrtDisc = Math.sqrt(disc);
+    [(-b - sqrtDisc) / (2 * a), (-b + sqrtDisc) / (2 * a)].forEach((t) => {
+      if (t <= 0) return;
+      const x = cx + t * dx;
+      const y = cy + t * dy;
+      const valid = horizontal ? (farSide ? x >= w - r : x <= r) : (farSide ? y >= h - r : y <= r);
+      if (valid) consider(t, x, y);
+    });
+  };
+
+  if (horizontal) {
+    if (dy !== 0) {
+      const t1 = (0 - cy) / dy;
+      const x1 = cx + t1 * dx;
+      if (t1 > 0 && x1 >= r && x1 <= w - r) consider(t1, x1, 0);
+      const t2 = (h - cy) / dy;
+      const x2 = cx + t2 * dx;
+      if (t2 > 0 && x2 >= r && x2 <= w - r) consider(t2, x2, h);
+    }
+    considerCircle(w - r, cy, true); // 오른쪽 반원
+    considerCircle(r, cy, false); // 왼쪽 반원
+  } else {
+    if (dx !== 0) {
+      const t1 = (0 - cx) / dx;
+      const y1 = cy + t1 * dy;
+      if (t1 > 0 && y1 >= r && y1 <= h - r) consider(t1, 0, y1);
+      const t2 = (w - cx) / dx;
+      const y2 = cy + t2 * dy;
+      if (t2 > 0 && y2 >= r && y2 <= h - r) consider(t2, w, y2);
+    }
+    considerCircle(cx, h - r, true); // 아래쪽 반원
+    considerCircle(cx, r, false); // 위쪽 반원
+  }
+  return best || { x: cx, y: cy };
+}
+
+// note 중심에서 (targetX, targetY) 방향으로 그 도형의 실제 윤곽과 만나는 지점(월드 좌표).
+// 두 도형을 화살표로 이을 때 양쪽 끝에 각각 이 함수를 쓴다(상대방의 중심을 목표로),
+// 화살표 연결 중 커서를 따라가는 미리보기 선도 커서를 목표로 이 함수를 그대로 쓴다.
+function shapeExitPoint(note, targetX, targetY) {
+  const cx = note.x + note.w / 2;
+  const cy = note.y + note.h / 2;
+  const dx = targetX - cx;
+  const dy = targetY - cy;
+  if (dx === 0 && dy === 0) return { x: cx, y: cy };
+
+  const local =
+    note.shape === "stadium"
+      ? stadiumRayIntersect(note.w, note.h, dx, dy)
+      : polygonRayIntersect(note.w, note.h, SHAPE_OUTLINE_POLYGONS[note.shape] || SHAPE_OUTLINE_POLYGONS.rect, dx, dy);
+
+  return { x: note.x + local.x, y: note.y + local.y };
 }
 
 // 화살표 하나의 좌표를 현재 두 메모 위치를 기준으로 다시 계산해서 반영한다.
@@ -1390,8 +1503,10 @@ function updateArrowGeometry(arrow) {
   const toNote = getNote(arrow.toId);
   if (!fromNote || !toNote) return;
 
-  const p1 = sideMidpoint(fromNote, chooseSide(fromNote, toNote));
-  const p2 = sideMidpoint(toNote, chooseSide(toNote, fromNote));
+  const fromCenter = { x: fromNote.x + fromNote.w / 2, y: fromNote.y + fromNote.h / 2 };
+  const toCenter = { x: toNote.x + toNote.w / 2, y: toNote.y + toNote.h / 2 };
+  const p1 = shapeExitPoint(fromNote, toCenter.x, toCenter.y);
+  const p2 = shapeExitPoint(toNote, fromCenter.x, fromCenter.y);
 
   ["arrow-hit", "arrow-visible"].forEach((cls) => {
     const line = g.querySelector(`.${cls}`);
@@ -1786,9 +1901,8 @@ function updateArrowDraft(worldPt) {
     cancelArrowDraft();
     return;
   }
-  // 커서가 있는 쪽 변에서 선이 나오도록, 커서를 크기 0짜리 "메모"로 취급해 매번 다시 고른다.
-  const side = chooseSide(fromNote, { x: worldPt.x, y: worldPt.y, w: 0, h: 0 });
-  const p1 = sideMidpoint(fromNote, side);
+  // 커서 방향으로 도형 윤곽과 만나는 지점에서 선이 나오도록, 매번 다시 계산한다.
+  const p1 = shapeExitPoint(fromNote, worldPt.x, worldPt.y);
   arrowDraftEl.setAttribute("x1", p1.x);
   arrowDraftEl.setAttribute("y1", p1.y);
   arrowDraftEl.setAttribute("x2", worldPt.x);
