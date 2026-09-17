@@ -70,6 +70,7 @@ const MAX_HISTORY = 50;
 const DEFAULT_NOTE_W = 170;
 const DEFAULT_NOTE_H = 70;
 const MIN_NOTE_SIZE = 60; // 메모가 이보다 작게 줄어들지는 않는다
+const MAX_AUTO_FIT_NOTE_H = 480; // 텍스트 넘침에 맞춰 자동으로 키울 때의 상한 — 무한정 커지지 않도록
 const DEFAULT_SHAPE = "rect";
 const SHAPE_LABELS = { rect: "사각형", ellipse: "원", diamond: "마름모" }; // "알려진 도형인지" 확인용
 
@@ -1991,6 +1992,64 @@ function initResizeHandles() {
 
 /* ===== 메모 ===== */
 
+/* ===== 텍스트 넘침에 맞춘 자동 높이 조정 =====
+ * 화면에 붙이지 않는 오프스크린 프로브(.note/.note-text 와 완전히 같은 클래스를 입혀서
+ * 만든 임시 요소)로 실제 렌더링을 그대로 재현해 측정한다 — 도형별 텍스트 인셋 비율
+ * (원 15%, 마름모 25% 등, styles.css 참고)을 여기 따로 하드코딩하지 않기 위해서다.
+ * scrollHeight(실제 필요한 내용 높이) 가 clientHeight(지금 도형 높이가 허용하는
+ * 표시 높이) 를 넘으면, 그 비율(clientHeight/도형높이)을 거꾸로 적용해서 필요한
+ * 도형 높이를 역산한다 — 스타일시트의 인셋 값이 나중에 바뀌어도 이 계산은 그대로
+ * 맞는다(실측 비율을 쓰기 때문). 너비는 건드리지 않는다 — 항상 세로로만 키운다. */
+function measureNoteFitHeight(text, shape, diagramType, fontSize, textAlign, w, h) {
+  const probe = document.createElement("div");
+  probe.className = "note";
+  probe.dataset.shape = shape;
+  probe.dataset.diagramType = diagramType || "none";
+  probe.style.position = "fixed";
+  probe.style.left = "-99999px";
+  probe.style.top = "0";
+  probe.style.width = `${w}px`;
+  probe.style.height = `${h}px`;
+  probe.style.visibility = "hidden";
+
+  const textEl = document.createElement("div");
+  textEl.className = "note-text";
+  textEl.style.fontSize = `${fontSize}px`;
+  textEl.style.textAlign = textAlign;
+  // 실제 .note-text 는 align-items:center 로 세로 가운데 정렬한다 — 그런데 내용이 넘칠 때
+  // 가운데 정렬은 위/아래로 절반씩 넘치게 만들고, scrollTop 이 음수로 갈 수 없어서
+  // scrollHeight 가 "박스 위로 넘친 절반"을 못 세고 실제보다 작게(대략 (박스높이+실제내용
+  // 높이)/2 로) 보고한다 — 게다가 박스 높이를 바꿀 때마다 그 값 자체가 달라져서, 필요한
+  // 높이를 한 번에 정확히 역산할 수가 없다(박스를 키워도 또 그만큼만 부족한 것처럼 보임).
+  // 측정용 프로브에서만 위쪽 정렬로 바꾸면 넘친 내용이 전부 아래쪽으로만 쌓여 scrollHeight
+  // 가 박스 높이와 무관한 "진짜" 내용 높이를 정확히 돌려준다(실제로 보이는 도형은 원래대로
+  // 가운데 정렬 그대로다 — 여기서 바꾼 건 이 임시 프로브 하나뿐).
+  textEl.style.alignItems = "flex-start";
+  textEl.textContent = text || "";
+  probe.appendChild(textEl);
+  document.body.appendChild(probe);
+
+  let neededH = h;
+  if (textEl.clientHeight > 0 && textEl.scrollHeight > textEl.clientHeight) {
+    neededH = Math.min(MAX_AUTO_FIT_NOTE_H, Math.ceil((textEl.scrollHeight / textEl.clientHeight) * h));
+  }
+
+  document.body.removeChild(probe);
+  return Math.max(h, neededH);
+}
+
+// 지금 텍스트가 도형 높이보다 커서 넘치면(그렇지 않으면 스크롤이 생기는 상태) 필요한
+// 만큼만 키운다. 절대 줄이지는 않는다 — 사용자가 일부러 키운 크기는 항상 그대로
+// 존중되고, "너무 작아서 잘리는" 경우에만 개입한다.
+function growNoteToFitTextIfOverflowing(note) {
+  const neededH = measureNoteFitHeight(note.text, note.shape, note.diagramType, note.fontSize, note.textAlign, note.w, note.h);
+  if (neededH <= note.h) return false;
+  note.h = neededH;
+  const el = noteEl(note.id);
+  if (el) el.style.height = `${neededH}px`;
+  return true;
+}
+
 // groupId 를 주면, 만들어진 메모를 그 그룹에 바로 편입시킨다(그룹 영역 안에서 우클릭
 // 퀵메뉴로 "이 그룹에 메모 추가"를 골랐을 때 — 방금 태어난 메모라 보호할 기존 타입
 // 선택이 없으므로 force=true 로 그룹 타입을 그대로 물려받는다).
@@ -2011,6 +2070,7 @@ function createNote(worldX, worldY, text = "", shape = nextShape, groupId = null
   };
   notes.push(note);
   const el = renderNote(note);
+  if (growNoteToFitTextIfOverflowing(note)) updateAllArrowGeometry();
   if (groupId) {
     addNotesToGroup([note.id], groupId, true);
     renderGroups();
@@ -2829,6 +2889,11 @@ function renderNote(note) {
   });
   textEl.addEventListener("input", () => {
     note.text = textEl.textContent;
+    if (growNoteToFitTextIfOverflowing(note)) {
+      updateHandles();
+      updateAllArrowGeometry();
+      updateGroupBoxGeometry();
+    }
     save();
   });
   textEl.addEventListener("blur", () => {
@@ -3513,10 +3578,13 @@ function escapeMermaidLabel(text) {
 
 // 마인드맵은 라벨을 따옴표로 감싸지 않고 괄호류로 모양을 정하는 문법이라,
 // 괄호가 텍스트에 들어있으면 파싱이 깨진다. 그래서 여기서만 따로 정리한다.
+// 줄바꿈은 flowchart(escapeMermaidLabel)와 똑같이 <br/> 로 내보낸다 — Mermaid
+// mindmap 라벨도 일반 텍스트라 <br/> 를 그대로 쓸 수 있고, Import 쪽에서 다시
+// 실제 줄바꿈으로 되돌린다(대칭).
 function sanitizeMindmapLabel(text) {
   const trimmed = (text || "").trim();
   if (!trimmed) return "(빈 메모)";
-  return trimmed.replace(/\s*\n\s*/g, " ").replace(/[[\](){}"]/g, "");
+  return trimmed.replace(/[[\](){}"]/g, "").replace(/\s*\n\s*/g, "<br/>");
 }
 
 function mermaidNodeId(noteId) {
@@ -3848,6 +3916,14 @@ function stripMermaidQuotes(s) {
   return t;
 }
 
+// Export 때 escapeMermaidLabel/sanitizeMindmapLabel 이 실제 줄바꿈을 <br/> 로 바꿔
+// 한 줄짜리 Mermaid 문법 안에 담았던 것의 반대 방향 — <br/> 나 <br>(대소문자·공백·
+// 슬래시 유무 무관)을 다시 실제 줄바꿈으로 되돌린다. 이걸 안 하면 도형 안에 "<br/>"
+// 라는 글자가 그대로 노출된다.
+function unescapeMermaidBr(text) {
+  return (text || "").replace(/<br\s*\/?>/gi, "\n");
+}
+
 /* 플로우차트 한 줄을 앞에서부터 훑으면서 "노드(도형+라벨) → 화살표(+라벨)? → 노드 → ..."
  * 사슬을 뽑아낸다. `A["시작"] --> B{"확인?"}`, `A --> B --> C`, `A -->|"예"| B`, 따옴표 없는
  * `A[Start]`, 화살표 없이 노드 선언만 있는 줄(`A["혼자"]`) 을 전부 이 한 함수로 처리한다.
@@ -3875,21 +3951,21 @@ function tokenizeFlowchartLine(line) {
     if (line.slice(i, i + 2) === "((") {
       const close = line.indexOf("))", i + 2);
       if (close === -1) return null;
-      const shape = { shape: "ellipse", label: stripMermaidQuotes(line.slice(i + 2, close)) };
+      const shape = { shape: "ellipse", label: unescapeMermaidBr(stripMermaidQuotes(line.slice(i + 2, close))) };
       i = close + 2;
       return shape;
     }
     if (line[i] === "[") {
       const close = line.indexOf("]", i + 1);
       if (close === -1) return null;
-      const shape = { shape: "rect", label: stripMermaidQuotes(line.slice(i + 1, close)) };
+      const shape = { shape: "rect", label: unescapeMermaidBr(stripMermaidQuotes(line.slice(i + 1, close))) };
       i = close + 1;
       return shape;
     }
     if (line[i] === "{") {
       const close = line.indexOf("}", i + 1);
       if (close === -1) return null;
-      const shape = { shape: "diamond", label: stripMermaidQuotes(line.slice(i + 1, close)) };
+      const shape = { shape: "diamond", label: unescapeMermaidBr(stripMermaidQuotes(line.slice(i + 1, close))) };
       i = close + 1;
       return shape;
     }
@@ -3906,7 +3982,7 @@ function tokenizeFlowchartLine(line) {
     if (line[i] !== "|") return null;
     const close = line.indexOf("|", i + 1);
     if (close === -1) return null;
-    const label = stripMermaidQuotes(line.slice(i + 1, close));
+    const label = unescapeMermaidBr(stripMermaidQuotes(line.slice(i + 1, close)));
     i = close + 1;
     return label;
   };
@@ -4006,13 +4082,13 @@ function parseMindmapNodeToken(trimmed) {
   // 공백과 도형 괄호만 피하면 한글 id 도 그대로 허용해서, "가지2{{육각형 잎}}" 같은 줄에서
   // id="가지2"/라벨="육각형 잎" 로 정확히 갈라지게 한다.
   const m = /^([^\s(){}[\]]+)?\s*(?:\(\(([^)]*)\)\)|\{\{([^}]*)\}\}|\[([^\]]*)\]|\(([^)]*)\))?$/.exec(trimmed);
-  if (!m) return { shape: "rect", label: trimmed };
+  if (!m) return { shape: "rect", label: unescapeMermaidBr(trimmed) };
   const [, id, circle, hexagon, square, round] = m;
-  if (circle !== undefined) return { shape: "ellipse", label: circle.trim() || id || trimmed };
-  if (hexagon !== undefined) return { shape: "diamond", label: hexagon.trim() || id || trimmed };
-  if (square !== undefined) return { shape: "rect", label: square.trim() || id || trimmed };
-  if (round !== undefined) return { shape: "rect", label: round.trim() || id || trimmed };
-  return { shape: "rect", label: (id || trimmed).trim() };
+  if (circle !== undefined) return { shape: "ellipse", label: unescapeMermaidBr(circle.trim() || id || trimmed) };
+  if (hexagon !== undefined) return { shape: "diamond", label: unescapeMermaidBr(hexagon.trim() || id || trimmed) };
+  if (square !== undefined) return { shape: "rect", label: unescapeMermaidBr(square.trim() || id || trimmed) };
+  if (round !== undefined) return { shape: "rect", label: unescapeMermaidBr(round.trim() || id || trimmed) };
+  return { shape: "rect", label: unescapeMermaidBr((id || trimmed).trim()) };
 }
 
 // 마인드맵 블록 본문을 들여쓰기 기준 트리로 바꾼다. 들여쓰기 스택(indent, id)을 유지하면서,
@@ -4087,18 +4163,41 @@ function toDagreRankDir(direction) {
   return "TB";
 }
 
+// 블록 안의 노드마다, 라벨이 기본 크기(DEFAULT_NOTE_W x DEFAULT_NOTE_H)에 넘치지 않고
+// 들어갈 크기를 미리 재둔다 — dagre 가 서로 겹치지 않게 간격을 잡을 때부터 이 실제
+// 크기를 알아야(레이아웃 이후에 키우면 다른 도형과 겹칠 수 있다) 하므로 레이아웃보다
+// 먼저 계산한다. 너비는 항상 기본값 그대로 유지한다(다이어그램 전체가 들쭉날쭉한
+// 너비로 나열되면 어색해서, 일반 도형 목록처럼 통일된 너비 안에서 세로만 늘린다).
+function computeBlockNodeSizes(block) {
+  const sizes = new Map();
+  block.nodes.forEach((info, id) => {
+    const h = measureNoteFitHeight(
+      info.label,
+      info.shape || "rect",
+      block.type,
+      DEFAULT_FONT_SIZE,
+      DEFAULT_TEXT_ALIGN,
+      DEFAULT_NOTE_W,
+      DEFAULT_NOTE_H
+    );
+    sizes.set(id, { w: DEFAULT_NOTE_W, h });
+  });
+  return sizes;
+}
+
 // flowchart: subgraph 를 dagre 의 "compound"(묶음) 노드로 등록해서, 묶인 도형들이
 // 레이아웃에서도 서로 가까이 모이게 한다. mindmap: 그룹 개념이 없는 평범한 트리라
 // compound 없이 그냥 부모→자식 엣지만 넣는다. 두 경우 다 결과는 같은 모양
 // (mermaidId -> {x, y}, dagre 기준 노드 "중심" 좌표)으로 돌려준다.
-function layoutBlockWithDagre(block) {
+function layoutBlockWithDagre(block, sizes) {
   const g = new dagre.graphlib.Graph({ compound: true });
   const rankdir = block.type === "flowchart" ? toDagreRankDir(block.direction) : "LR";
   g.setGraph({ rankdir, nodesep: MERMAID_IMPORT_NODESEP, ranksep: MERMAID_IMPORT_RANKSEP, marginx: 20, marginy: 20 });
   g.setDefaultEdgeLabel(() => ({}));
 
   block.nodes.forEach((info, id) => {
-    g.setNode(id, { width: DEFAULT_NOTE_W, height: DEFAULT_NOTE_H });
+    const size = sizes.get(id);
+    g.setNode(id, { width: size.w, height: size.h });
   });
   block.edges.forEach((e) => {
     if (!block.nodes.has(e.from) || !block.nodes.has(e.to) || e.from === e.to) return;
@@ -4125,14 +4224,16 @@ function layoutBlockWithDagre(block) {
   return positions;
 }
 
-// 블록 하나의 노드 좌표들로부터 그 블록이 차지하는 월드 경계 상자를 구한다.
-function boundsOfPositions(positions) {
+// 블록 하나의 노드 좌표들로부터 그 블록이 차지하는 월드 경계 상자를 구한다. 노드마다
+// 크기가 다를 수 있어(텍스트 자동 맞춤) sizes 에서 각자의 실제 크기를 찾아 반영한다.
+function boundsOfPositions(positions, sizes) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-  positions.forEach(({ x, y }) => {
-    minX = Math.min(minX, x - DEFAULT_NOTE_W / 2);
-    maxX = Math.max(maxX, x + DEFAULT_NOTE_W / 2);
-    minY = Math.min(minY, y - DEFAULT_NOTE_H / 2);
-    maxY = Math.max(maxY, y + DEFAULT_NOTE_H / 2);
+  positions.forEach(({ x, y }, id) => {
+    const size = sizes.get(id);
+    minX = Math.min(minX, x - size.w / 2);
+    maxX = Math.max(maxX, x + size.w / 2);
+    minY = Math.min(minY, y - size.h / 2);
+    maxY = Math.max(maxY, y + size.h / 2);
   });
   return { minX, minY, maxX, maxY };
 }
@@ -4143,14 +4244,14 @@ const MERMAID_IMPORT_ROW_MAX_WIDTH = 1600;
 // 블록마다 이미 계산된(dagre) 상대 좌표들을, 서로 겹치지 않도록 줄줄이 늘어놓은 뒤(왼쪽→
 // 오른쪽, 폭이 넘치면 다음 줄로) 전체 묶음의 중심이 지금 보이는 화면 한가운데에 오도록
 // 한 번에 옮긴다 — "화면 밖 저 멀리에 그려지지 않도록"(요구사항 5)의 구현.
-function placeBlocksOnCanvas(blocks, blockPositions) {
+function placeBlocksOnCanvas(blocks, blockPositions, blockSizes) {
   let cursorX = 0;
   let cursorY = 0;
   let rowHeight = 0;
   const blockOffsets = [];
 
   blocks.forEach((block, idx) => {
-    const bounds = boundsOfPositions(blockPositions[idx]);
+    const bounds = boundsOfPositions(blockPositions[idx], blockSizes[idx]);
     const width = bounds.maxX - bounds.minX;
     const height = bounds.maxY - bounds.minY;
 
@@ -4171,7 +4272,7 @@ function placeBlocksOnCanvas(blocks, blockPositions) {
   // 화면 뷰포트의 중심(월드 좌표)에 오도록 마지막으로 한 번 더 평행이동한다.
   let overallMinX = Infinity, overallMinY = Infinity, overallMaxX = -Infinity, overallMaxY = -Infinity;
   blocks.forEach((block, idx) => {
-    const bounds = boundsOfPositions(blockPositions[idx]);
+    const bounds = boundsOfPositions(blockPositions[idx], blockSizes[idx]);
     const off = blockOffsets[idx];
     overallMinX = Math.min(overallMinX, bounds.minX + off.x);
     overallMinY = Math.min(overallMinY, bounds.minY + off.y);
@@ -4214,8 +4315,9 @@ function importMermaidText(text) {
     }
   });
 
-  const blockPositions = blocks.map(layoutBlockWithDagre);
-  const blockOffsets = placeBlocksOnCanvas(blocks, blockPositions);
+  const blockSizes = blocks.map(computeBlockNodeSizes);
+  const blockPositions = blocks.map((block, idx) => layoutBlockWithDagre(block, blockSizes[idx]));
+  const blockOffsets = placeBlocksOnCanvas(blocks, blockPositions, blockSizes);
 
   let localNextId = nextId;
   let localNextArrowId = nextArrowId;
@@ -4228,14 +4330,16 @@ function importMermaidText(text) {
   blocks.forEach((block, idx) => {
     const positions = blockPositions[idx];
     const offset = blockOffsets[idx];
+    const sizes = blockSizes[idx];
     block.nodes.forEach((info, mermaidId) => {
       const center = positions.get(mermaidId);
+      const size = sizes.get(mermaidId);
       const note = {
         id: localNextId++,
-        x: center.x + offset.x - DEFAULT_NOTE_W / 2,
-        y: center.y + offset.y - DEFAULT_NOTE_H / 2,
-        w: DEFAULT_NOTE_W,
-        h: DEFAULT_NOTE_H,
+        x: center.x + offset.x - size.w / 2,
+        y: center.y + offset.y - size.h / 2,
+        w: size.w,
+        h: size.h,
         text: info.label || "",
         shape: info.shape || "rect",
         bg: null,
@@ -4274,7 +4378,10 @@ function importMermaidText(text) {
       const gid = localNextGroupId++;
       const rootNoteId = idMap.get(`${idx}:${block.root}`);
       const rootNote = newNotes.find((n) => n.id === rootNoteId);
-      const name = (rootNote && rootNote.text.trim()) || `마인드맵 ${gid}`;
+      // 그룹 이름표는 한 줄짜리 배지라, 루트 텍스트에 (<br/> 를 되돌린) 줄바꿈이
+      // 들어있으면 공백으로 합쳐서 쓴다 — 도형 본문과 달리 이름표는 여러 줄을 감당 못 한다.
+      const rootLabel = rootNote ? rootNote.text.trim().replace(/\s*\n\s*/g, " ") : "";
+      const name = rootLabel || `마인드맵 ${gid}`;
       newGroups.push({ id: `g${gid}`, name, noteIds, locked: false });
     }
   });
