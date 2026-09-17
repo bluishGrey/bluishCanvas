@@ -87,8 +87,9 @@
       <polyline id="lasso-path" points=""></polyline>
     </svg>
     <!-- 선택된 메모(들)의 실제 경계 상자를 그대로 보여주는 점선 테두리 (화면 좌표 기준).
-         원/마름모는 도형 모양 때문에 경계 상자 모서리가 비어 보이는데, 이 테두리가
-         핸들/삭제버튼이 어떤 사각형을 기준으로 위치하는지 눈에 보이게 해준다. -->
+         사각형이 아닌 도형(분기/시작·끝/준비·설정/입력/출력)은 도형 모양 때문에 경계
+         상자 모서리가 비어 보이는데, 이 테두리가 핸들/삭제버튼이 어떤 사각형을
+         기준으로 위치하는지 눈에 보이게 해준다. -->
     <div id="selection-outline" hidden></div>
     <!-- 메모 선택 시 모서리에 나타나는 크기조절 핸들 (화면 좌표 기준) -->
     <div id="resize-handles" hidden>
@@ -111,11 +112,15 @@
   </div>
 
   <div id="toolbar">
-    <!-- 다음 생성 도형 미니 팔레트: 아이콘 클릭 = 숫자키(1/2/3)와 동일한 기능 -->
+    <!-- 다음 생성 도형 미니 팔레트: 아이콘 클릭 = 숫자키(1~6)와 동일한 기능.
+         이름은 기하학적 모양이 아니라 흐름도에서의 용도(Mermaid 표준 도형 이름과 동일)로 표시한다. -->
     <div id="shape-palette">
-      <button type="button" class="shape-palette-btn" data-shape="rect" title="사각형 (1)">▭<span class="shape-key">1</span></button>
-      <button type="button" class="shape-palette-btn" data-shape="ellipse" title="원 (2)">◯<span class="shape-key">2</span></button>
-      <button type="button" class="shape-palette-btn" data-shape="diamond" title="마름모 (3)">◇<span class="shape-key">3</span></button>
+      <button type="button" class="shape-palette-btn" data-shape="rect" title="단계 (1)">▭<span class="shape-key">1</span></button>
+      <button type="button" class="shape-palette-btn" data-shape="diamond" title="분기 (2)">◇<span class="shape-key">2</span></button>
+      <button type="button" class="shape-palette-btn" data-shape="stadium" title="시작/끝 (3)">⬭<span class="shape-key">3</span></button>
+      <button type="button" class="shape-palette-btn" data-shape="hexagon" title="준비/설정 (4)">⬡<span class="shape-key">4</span></button>
+      <button type="button" class="shape-palette-btn" data-shape="parallelogram" title="입력 (5)">/<span class="shape-key">5</span></button>
+      <button type="button" class="shape-palette-btn" data-shape="parallelogram-rev" title="출력 (6)">\<span class="shape-key">6</span></button>
     </div>
     <!-- 다음 생성 다이어그램 타입: Tab 으로 전환. 새로 만드는 도형이 이 타입을 갖는다 -->
     <div id="diagram-type-palette">
@@ -152,7 +157,7 @@
         <ul>
           <li>빈 곳 <b>더블클릭</b> — 메모 생성(현재 도형으로)</li>
           <li>빈 곳 <b>우클릭</b> — 퀵메뉴(메모 추가 / 도형 전환 / <b>올가미로 그룹 만들기</b> — 클릭하면 바로 올가미 모드로 전환)</li>
-          <li><b>1</b> / <b>2</b> / <b>3</b> 또는 우측 상단 도형 아이콘 클릭 — 다음 생성 도형 전환(사각형/원/마름모)</li>
+          <li><b>1</b>~<b>6</b> 또는 우측 상단 도형 아이콘 클릭 — 다음 생성 도형 전환(단계/분기/시작·끝/준비·설정/입력/출력, Mermaid 표준 도형 이름)</li>
           <li>메모 <b>더블클릭</b> — 텍스트 편집</li>
           <li>메모 <b>Shift+우클릭</b> — 다이어그램 타입(플로우차트/마인드맵) 빠른 선택 메뉴(꾸미기 패널과 같은 동작 — 다중 선택·그룹 전체 적용도 동일). Shift 없는 보통 우클릭은 그대로 화살표 연결 시작</li>
           <li>도형 높이는 항상 지금 텍스트 양에 맞춰 자동으로 계산된다(너비는 그대로) — 텍스트가 늘면 커지고, 줄면 다시 기본 크기로 작아진다. 모서리를 <b>드래그</b>해서 수동으로 리사이즈한 도형은 그 순간부터 자동 조정에서 빠지고 그 크기가 계속 유지된다</li>
@@ -209,7 +214,7 @@
         <h3>Mermaid 내보내기 (클로드와 주고받기)</h3>
         <ul>
           <li><b>Tab</b> 또는 우측 상단 토글 — 다음에 만들 도형의 다이어그램 타입(플로우차트/마인드맵) 전환</li>
-          <li>마인드맵 도형은 모서리가 둥글고(사각형은 캡슐 모양, 타원은 더 원에 가까운 비율), 플로우차트 도형은 모서리가 직선이다(타원은 기본 비율 그대로) — 그룹 이름표도 같은 규칙(플로우차트=각진 배지, 마인드맵=둥근 캡슐 배지)을 따르고, 배지에 타입 아이콘(<b>🔀</b> 플로우차트 / <b>🧠</b> 마인드맵)도 붙는다. 그룹 배경색 자체는 타입과 무관하게 항상 같다</li>
+          <li>도형 자체의 생김새는 다이어그램 타입과 무관하게 항상 같다(6종 모양 그대로) — 타입 구분은 그룹 이름표의 모양(플로우차트=각진 배지, 마인드맵=둥근 캡슐 배지)과 타입 아이콘(<b>🔀</b> 플로우차트 / <b>🧠</b> 마인드맵)이 맡는다. 그룹 배경색 자체는 타입과 무관하게 항상 같다</li>
           <li><b>L</b>, 툴바 <b>◌ 올가미</b>, 또는 빈 곳 우클릭 퀵메뉴의 <b>올가미로 그룹 만들기</b> — 올가미 모드(<b>Esc</b>로 해제, 그룹을 하나 묶으면 자동으로 선택 모드로 돌아간다). 감싼 도형이 전부 미배정이면 새 그룹이 생기고(타입이 섞여 있으면 타입별로 나뉨, 미지정 도형은 같이 묶인 쪽 타입을 따라감), 이미 있는 그룹의 도형이 걸리면 새로 만들지 않고 미배정 도형만 그 그룹에 편입되며, 서로 다른 그룹 여러 개가 걸리면 멤버가 더 많은 그룹으로 합쳐진다</li>
           <li>그룹 박스의 이름 <b>더블클릭</b> — 이름 변경(Mermaid 의 subgraph 이름이 된다), <b>×</b> — 그룹 해제</li>
           <li>그룹 <b>우클릭</b>(박스나 이름표) — 전체 선택 / 이름 변경 / 타입 전환(마인드맵 전환 시 트리가 아니면 거부) / 그룹 복제(도형+화살표+배치를 그대로 복사) / 잠그기·잠금 해제 / 그룹 해제</li>
@@ -220,10 +225,11 @@
           <li>그룹 배경 안(이름표 아닌 곳)을 <b>우클릭</b>하면 안내가 뜨고, "여기에 메모 추가"로 만든 메모가 그 그룹에 바로 편입된다</li>
           <li>그룹 소속 도형에 마우스를 올리면 삭제(×) 버튼 옆에 <b>−</b> 버튼이 나타난다 — 클릭하면 그 도형만 그룹에서 빠지고(삭제 아님) 박스는 남은 멤버 기준으로 다시 계산된다. 같은 동작을 <b>꾸미기</b> 패널의 "그룹에서 빼기" 버튼으로, 또는 <b>2개 이상 선택</b>했을 때 선택 경계 상자 우측 상단에 나타나는 같은 모양(원형 <b>−</b>)의 버튼으로도 할 수 있다(셋 다 다중 선택 시 그룹에 속한 것만 전부 빠짐). 그룹에 도형이 하나도 안 남으면 그룹 자체가 사라진다</li>
           <li><b>2개 이상 선택</b> 시 그 <b>−</b> 버튼 오른쪽에 <b>×</b> 버튼도 함께 뜬다(그룹 소속 여부 무관) — 클릭하면 선택된 도형 전부와 딸린 화살표가 한 번에 삭제된다(Delete 키와 동일)</li>
-          <li>그룹에 속하지 않은 도형은 테두리가 <b>점선 + 주황색</b>으로 표시된다(마름모는 배경 전체가 주황색). 그룹에 속한 도형은 실선 테두리 그대로</li>
+          <li>그룹에 속하지 않은 도형은 테두리가 <b>점선 + 주황색</b>으로 표시된다(단계/시작·끝은 점선 테두리, 분기/준비·설정/입력/출력은 배경 전체가 주황색 — 배경색으로 테두리를 흉내내는 도형이라 점선을 못 써서). 그룹에 속한 도형은 실선 테두리 그대로</li>
           <li><b>⇄ 재배치</b> — 선택된 도형(딱 선택된 것만, 그룹으로 확장 안 됨)이나 페이지 전체를 Mermaid 배치 규칙대로 다시 정렬한다. 확인 메시지 후 실행되며, 도형을 지우고 새로 만들지 않아 배경색·자동크기 상태는 그대로 유지된다</li>
           <li><b>⤴ Mermaid</b> — 현재 페이지를 Mermaid 텍스트로 변환해 보여준다. 블록마다 <b>복사</b> 버튼이 있고, 변환에서 빠진 것이 있으면 위쪽에 알려준다</li>
           <li>마인드맵 그룹은 화살표가 하나의 중심에서 뻗어나가는 <b>트리</b>여야 한다(순환하거나 화살표가 두 개 들어오면 변환되지 않는다)</li>
+          <li>마인드맵 문법엔 단계(사각형)와 준비/설정(육각형)만 그대로 대응된다 — 분기/시작·끝/입력/출력은 대응 모양이 없어 비슷한 모양(둥근 사각형/원/사각형)으로 대체되고, 실제로 쓰였을 때만 위쪽에 경고로 알려준다</li>
           <li><b>⤵ Mermaid 가져오기</b> — Mermaid 텍스트(flowchart/mindmap)를 붙여넣으면 좌표를 자동 계산해 도형·화살표·그룹으로 만든다. flowchart 의 subgraph 는 그룹이 되고, subgraph 밖 낱개 도형은 "가져온 도형" 그룹으로 따로 묶인다(가져온 도형은 예외 없이 항상 어떤 그룹엔가 속한다) — mindmap 은 통째로 그룹 하나가 된다. 기존 캔버스 내용과 안 겹치는 빈 자리(오른쪽 또는 아래쪽)에 배치되고, 다 만든 뒤엔 화면이 그 자리로 바로 이동한다. 텍스트 안의 <b>&lt;br/&gt;</b>·<b>&lt;br&gt;</b> 는 실제 줄바꿈으로 바뀌고, 각 도형은 그 텍스트가 잘리지 않을 만큼 충분한 크기로 만들어진다. 새로 만들어진 도형은 이동·크기조절·타입변경·삭제 등 기존 도형과 완전히 동일하게 다룰 수 있다. 파싱하지 못한 줄이 있으면 그 부분만 건너뛰고 나머지는 최대한 가져오며, 무엇을 건너뛰었는지 알려준다</li>
           <li>도형 텍스트 안의 실제 줄바꿈은 내보내기(Export) 할 때 <b>&lt;br/&gt;</b> 로 바뀌어 Mermaid 문법을 유지한다(가져오기와 정확히 반대 방향)</li>
         </ul>
@@ -267,9 +273,12 @@
     <button type="button" class="quick-menu-item" data-action="create">여기에 메모 추가</button>
     <div class="quick-menu-separator"></div>
     <div class="quick-menu-label">다음 생성 도형</div>
-    <button type="button" class="quick-menu-item shape-item" data-shape="rect">▭ 사각형</button>
-    <button type="button" class="quick-menu-item shape-item" data-shape="ellipse">◯ 원</button>
-    <button type="button" class="quick-menu-item shape-item" data-shape="diamond">◇ 마름모</button>
+    <button type="button" class="quick-menu-item shape-item" data-shape="rect">▭ 단계</button>
+    <button type="button" class="quick-menu-item shape-item" data-shape="diamond">◇ 분기</button>
+    <button type="button" class="quick-menu-item shape-item" data-shape="stadium">⬭ 시작/끝</button>
+    <button type="button" class="quick-menu-item shape-item" data-shape="hexagon">⬡ 준비/설정</button>
+    <button type="button" class="quick-menu-item shape-item" data-shape="parallelogram">/ 입력</button>
+    <button type="button" class="quick-menu-item shape-item" data-shape="parallelogram-rev">\ 출력</button>
     <div class="quick-menu-separator"></div>
     <button type="button" class="quick-menu-item" data-action="lasso">◌ 올가미로 그룹 만들기</button>
   </div>

@@ -75,7 +75,26 @@ const DEFAULT_NOTE_H = 70;
 const MIN_NOTE_SIZE = 60; // 메모가 이보다 작게 줄어들지는 않는다
 const MAX_AUTO_FIT_NOTE_H = 480; // 텍스트 넘침에 맞춰 자동으로 키울 때의 상한 — 무한정 커지지 않도록
 const DEFAULT_SHAPE = "rect";
-const SHAPE_LABELS = { rect: "사각형", ellipse: "원", diamond: "마름모" }; // "알려진 도형인지" 확인용
+// 플로우차트 도형 6종 — 이름은 기하학적 모양이 아니라 흐름도에서의 "용도"를 그대로 쓴다
+// (Mermaid 플로우차트 문법의 표준 도형 이름과도 맞춘 것 — 아래 flowchartNodeLine 참고).
+// SHAPE_ORDER 는 단축키(1~6)·미니 팔레트·퀵메뉴가 전부 공유하는 표시 순서다.
+const SHAPE_LABELS = {
+  rect: "단계",
+  diamond: "분기",
+  stadium: "시작/끝",
+  hexagon: "준비/설정",
+  parallelogram: "입력",
+  "parallelogram-rev": "출력",
+};
+const SHAPE_ORDER = ["rect", "diamond", "stadium", "hexagon", "parallelogram", "parallelogram-rev"];
+const SHAPE_GLYPHS = {
+  rect: "▭",
+  diamond: "◇",
+  stadium: "⬭",
+  hexagon: "⬡",
+  parallelogram: "/",
+  "parallelogram-rev": "\\",
+};
 
 // 메모 꾸미기(사이드바 "꾸미기" 패널)의 기본값. 기존 메모(이 필드들이 아직 없는 데이터)를
 // backfillNoteDefaults 로 채울 때도 이 값들을 쓰므로, 꾸미기 기능이 생기기 전 메모의
@@ -165,6 +184,9 @@ function backfillNoteDefaults(noteList) {
     if (typeof n.w !== "number") n.w = DEFAULT_NOTE_W;
     if (typeof n.h !== "number") n.h = DEFAULT_NOTE_H;
     if (!n.shape) n.shape = DEFAULT_SHAPE;
+    // 도형을 6종으로 재구성하면서 원(ellipse)을 없애고 시작/끝(stadium)으로 대체했다 —
+    // 기존에 저장돼 있던 원 도형은 자동으로 시작/끝으로 옮겨준다(요청 매핑 그대로).
+    if (n.shape === "ellipse") n.shape = "stadium";
     if (n.bg === undefined) n.bg = null; // null = 커스텀 배경색 없음(기본 흰색)
     if (typeof n.fontSize !== "number") n.fontSize = DEFAULT_FONT_SIZE;
     if (!n.textAlign) n.textAlign = DEFAULT_TEXT_ALIGN;
@@ -3579,7 +3601,7 @@ document.addEventListener("keydown", (e) => {
   }
 
   const key = e.key.toLowerCase();
-  if (key !== "1" && key !== "2" && key !== "3" && key !== "l") return;
+  if (!"123456".includes(key) && key !== "l") return;
   if (e.ctrlKey || e.metaKey || e.altKey) return; // Ctrl+L(주소창) 같은 조합은 건드리지 않는다
 
   // 텍스트 편집/입력 중이면 평범한 글자 입력으로 취급한다.
@@ -3598,8 +3620,7 @@ document.addEventListener("keydown", (e) => {
     return;
   }
 
-  const shapeByKey = { 1: "rect", 2: "ellipse", 3: "diamond" };
-  setNextShape(shapeByKey[key]);
+  setNextShape(SHAPE_ORDER[Number(key) - 1]);
 });
 
 /* ===== Mermaid 내보내기 =====
@@ -3641,22 +3662,56 @@ function mermaidNodeId(noteId) {
   return `N${noteId}`;
 }
 
-// 도형 모양 → 플로우차트 노드 문법
+// 도형 모양 → 플로우차트 노드 문법. 전부 Mermaid 표준 도형 문법 그대로다(단계=[], 분기={},
+// 시작/끝=([]) 스타디움, 준비/설정={{}} 육각형, 입력=[/ /], 출력=[\ \] 평행사변형).
 function flowchartNodeLine(note) {
   const label = escapeMermaidLabel(note.text);
   const id = mermaidNodeId(note.id);
-  if (note.shape === "diamond") return `${id}{"${label}"}`;
-  if (note.shape === "ellipse") return `${id}(("${label}"))`;
-  return `${id}["${label}"]`;
+  switch (note.shape) {
+    case "diamond":
+      return `${id}{"${label}"}`;
+    case "stadium":
+      return `${id}(["${label}"])`;
+    case "hexagon":
+      return `${id}{{"${label}"}}`;
+    case "parallelogram":
+      return `${id}[/"${label}"/]`;
+    case "parallelogram-rev":
+      return `${id}[\\"${label}"\\]`;
+    default:
+      return `${id}["${label}"]`; // 단계(사각형)
+  }
 }
 
-// 도형 모양 → 마인드맵 노드 문법. 마인드맵엔 마름모가 없어서 육각형으로 대체한다.
+// 마인드맵 문법이 실제로 지원하는 도형은 사각형([])·육각형({{}})뿐이다. 나머지(분기/
+// 시작·끝/입력/출력)는 대응 모양이 없어서 가장 비슷한 형태로 대체한다 — 분기는 둥근
+// 사각형(()), 시작/끝은 원((())), 입력·출력은 그냥 사각형([])으로. 실제로 대체가 일어난
+// 도형 모양의 집합은 generateMermaid() 가 usedMindmapFallbackShapes 로 모아서 한 번에
+// 경고로 알려준다(도형 하나하나마다 경고를 늘어놓지 않는다).
+const MINDMAP_UNSUPPORTED_SHAPES = new Set(["diamond", "stadium", "parallelogram", "parallelogram-rev"]);
+const MINDMAP_FALLBACK_DESC = {
+  diamond: "둥근 사각형",
+  stadium: "원",
+  parallelogram: "사각형",
+  "parallelogram-rev": "사각형",
+};
+
 function mindmapNodeLine(note) {
   const label = sanitizeMindmapLabel(note.text);
   const id = mermaidNodeId(note.id);
-  if (note.shape === "diamond") return `${id}{{${label}}}`;
-  if (note.shape === "ellipse") return `${id}((${label}))`;
-  return `${id}[${label}]`;
+  switch (note.shape) {
+    case "hexagon":
+      return `${id}{{${label}}}`;
+    case "diamond":
+      return `${id}(${label})`;
+    case "stadium":
+      return `${id}((${label}))`;
+    case "parallelogram":
+    case "parallelogram-rev":
+      return `${id}[${label}]`;
+    default:
+      return `${id}[${label}]`; // 단계(사각형)
+  }
 }
 
 // 마인드맵 그룹의 화살표들로 트리를 만든다. 트리가 아니면 why 에 이유를 담아 돌려준다.
@@ -3780,6 +3835,7 @@ function generateMermaid() {
   }
 
   let labelsIgnored = 0;
+  const usedMindmapFallbackShapes = new Set();
   mindmapGroups.forEach((group) => {
     const memberIdSet = new Set(group.noteIds);
     const groupArrows = arrows.filter(
@@ -3797,6 +3853,7 @@ function generateMermaid() {
     const walk = (noteId, depth) => {
       const note = getNote(noteId);
       if (!note) return;
+      if (MINDMAP_UNSUPPORTED_SHAPES.has(note.shape)) usedMindmapFallbackShapes.add(note.shape);
       lines.push(`${MERMAID_INDENT.repeat(depth + 1)}${mindmapNodeLine(note)}`);
       tree.childrenOf.get(noteId).forEach((childId) => walk(childId, depth + 1));
     };
@@ -3807,6 +3864,13 @@ function generateMermaid() {
 
   if (labelsIgnored > 0) {
     warnings.push(`마인드맵 안 화살표 라벨 ${labelsIgnored}개는 무시했습니다. Mermaid 마인드맵 문법에는 화살표 라벨이 없습니다.`);
+  }
+
+  if (usedMindmapFallbackShapes.size > 0) {
+    const desc = [...usedMindmapFallbackShapes]
+      .map((shape) => `${SHAPE_LABELS[shape]}→${MINDMAP_FALLBACK_DESC[shape]}`)
+      .join(", ");
+    warnings.push(`마인드맵 문법에 없는 도형 모양은 비슷한 모양으로 대체되었습니다: ${desc}`);
   }
 
   return { blocks, warnings };
@@ -3998,10 +4062,35 @@ function tokenizeFlowchartLine(line) {
   // 먼저 검사해야 한다 — 안 그러면 "((" 의 첫 "(" 를 다른 문법으로 오인할 일은 없지만
   // 순서를 명확히 해 둔다.
   const readShape = () => {
-    if (line.slice(i, i + 2) === "((") {
-      const close = line.indexOf("))", i + 2);
+    // 스타디움(시작/끝): ([...]) — "((" (예전 원 문법)과 헷갈리지 않도록 "([" 두 글자를 본다.
+    if (line.slice(i, i + 2) === "([") {
+      const close = line.indexOf("])", i + 2);
       if (close === -1) return null;
-      const shape = { shape: "ellipse", label: unescapeMermaidBr(stripMermaidQuotes(line.slice(i + 2, close))) };
+      const shape = { shape: "stadium", label: unescapeMermaidBr(stripMermaidQuotes(line.slice(i + 2, close))) };
+      i = close + 2;
+      return shape;
+    }
+    // 육각형(준비/설정): {{...}} — 단일 "{"(마름모)보다 먼저 봐야 한다.
+    if (line.slice(i, i + 2) === "{{") {
+      const close = line.indexOf("}}", i + 2);
+      if (close === -1) return null;
+      const shape = { shape: "hexagon", label: unescapeMermaidBr(stripMermaidQuotes(line.slice(i + 2, close))) };
+      i = close + 2;
+      return shape;
+    }
+    // 평행사변형(입력): [/텍스트/] — 단일 "["(사각형)보다 먼저 봐야 한다.
+    if (line.slice(i, i + 2) === "[/") {
+      const close = line.indexOf("/]", i + 2);
+      if (close === -1) return null;
+      const shape = { shape: "parallelogram", label: unescapeMermaidBr(stripMermaidQuotes(line.slice(i + 2, close))) };
+      i = close + 2;
+      return shape;
+    }
+    // 역평행사변형(출력): [\...\]
+    if (line.slice(i, i + 2) === "[\\") {
+      const close = line.indexOf("\\]", i + 2);
+      if (close === -1) return null;
+      const shape = { shape: "parallelogram-rev", label: unescapeMermaidBr(stripMermaidQuotes(line.slice(i + 2, close))) };
       i = close + 2;
       return shape;
     }
@@ -4127,6 +4216,10 @@ function parseFlowchartBlock(block) {
 // 없어서 육각형({{}})을 마름모로 되돌리고(내보내기와 대칭), 원({{}}과 구분되는 (()))은
 // 원으로, 사각형([])과 괄호만 있는 둥근 모양(())은 둘 다 사각형으로 단순화한다(이 앱은
 // 도형이 3종류뿐이라 둥근 사각형에 대응하는 게 없다). id 는 있어도 되고 없어도 된다.
+// mindmapNodeLine 의 대체 매핑과 정확히 대칭이 되도록 되돌린다 — 원({{}}) → 육각형(그대로),
+// 원((())) → 시작/끝(stadium 을 원으로 내보냈던 것), 둥근사각형(()) → 분기(마름모를 둥근
+// 사각형으로 내보냈던 것), 사각형([]) → 단계. 입력/출력은 둘 다 사각형([])으로 뭉개져서
+// 나가므로(마인드맵에 대응 모양이 없어서) 다시 구분해 낼 방법이 없다 — 사각형으로 들어온다.
 function parseMindmapNodeToken(trimmed) {
   // id 부분도 영문/숫자로 제한하지 않는다(위 tokenizeFlowchartLine 의 readId 와 같은 이유) —
   // 공백과 도형 괄호만 피하면 한글 id 도 그대로 허용해서, "가지2{{육각형 잎}}" 같은 줄에서
@@ -4134,10 +4227,10 @@ function parseMindmapNodeToken(trimmed) {
   const m = /^([^\s(){}[\]]+)?\s*(?:\(\(([^)]*)\)\)|\{\{([^}]*)\}\}|\[([^\]]*)\]|\(([^)]*)\))?$/.exec(trimmed);
   if (!m) return { shape: "rect", label: unescapeMermaidBr(trimmed) };
   const [, id, circle, hexagon, square, round] = m;
-  if (circle !== undefined) return { shape: "ellipse", label: unescapeMermaidBr(circle.trim() || id || trimmed) };
-  if (hexagon !== undefined) return { shape: "diamond", label: unescapeMermaidBr(hexagon.trim() || id || trimmed) };
+  if (circle !== undefined) return { shape: "stadium", label: unescapeMermaidBr(circle.trim() || id || trimmed) };
+  if (hexagon !== undefined) return { shape: "hexagon", label: unescapeMermaidBr(hexagon.trim() || id || trimmed) };
   if (square !== undefined) return { shape: "rect", label: unescapeMermaidBr(square.trim() || id || trimmed) };
-  if (round !== undefined) return { shape: "rect", label: unescapeMermaidBr(round.trim() || id || trimmed) };
+  if (round !== undefined) return { shape: "diamond", label: unescapeMermaidBr(round.trim() || id || trimmed) };
   return { shape: "rect", label: unescapeMermaidBr((id || trimmed).trim()) };
 }
 
