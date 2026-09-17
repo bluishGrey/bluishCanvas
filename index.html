@@ -153,6 +153,7 @@
     </div>
     <button type="button" id="lasso-btn" title="올가미로 그룹 묶기 (L)">◌ 올가미</button>
     <button type="button" id="mermaid-btn" title="이 페이지를 Mermaid 텍스트로 내보내기">⤴ Mermaid</button>
+    <button type="button" id="mermaid-import-btn" title="Mermaid 텍스트를 읽어서 도형으로 만들기">⤵ Mermaid 가져오기</button>
     <button type="button" id="canvas-search-btn" title="메모 검색 (Ctrl+F)">🔍</button>
     <span id="zoom-label">100%</span>
     <button id="reset-view" type="button">화면 초기화</button>
@@ -247,6 +248,7 @@
           <li>그룹 소속 도형에 마우스를 올리면 삭제(×) 버튼 옆에 <b>−</b> 버튼이 나타난다 — 클릭하면 그 도형만 그룹에서 빠지고(삭제 아님) 박스는 남은 멤버 기준으로 다시 계산된다. 같은 동작을 <b>꾸미기</b> 패널의 "그룹에서 빼기" 버튼으로도 할 수 있다(다중 선택 시 그룹에 속한 것만 전부 빠짐). 그룹에 도형이 하나도 안 남으면 그룹 자체가 사라진다</li>
           <li><b>⤴ Mermaid</b> — 현재 페이지를 Mermaid 텍스트로 변환해 보여준다. 블록마다 <b>복사</b> 버튼이 있고, 변환에서 빠진 것이 있으면 위쪽에 알려준다</li>
           <li>마인드맵 그룹은 화살표가 하나의 중심에서 뻗어나가는 <b>트리</b>여야 한다(순환하거나 화살표가 두 개 들어오면 변환되지 않는다)</li>
+          <li><b>⤵ Mermaid 가져오기</b> — Mermaid 텍스트(flowchart/mindmap)를 붙여넣으면 좌표를 자동 계산해 도형·화살표·그룹으로 만든다. 블록 여러 개를 한 번에 넣으면 서로 겹치지 않게 떨어뜨려 배치하고, 현재 화면 근처에 나타난다. flowchart 의 subgraph 는 그룹이 되고, mindmap 은 통째로 그룹 하나가 된다. 새로 만들어진 도형은 이동·크기조절·타입변경·삭제 등 기존 도형과 완전히 동일하게 다룰 수 있다. 파싱하지 못한 줄이 있으면 그 부분만 건너뛰고 나머지는 최대한 가져오며, 무엇을 건너뛰었는지 알려준다</li>
         </ul>
       </section>
     </div>
@@ -258,6 +260,24 @@
     <div id="mermaid-title">Mermaid 내보내기</div>
     <div id="mermaid-warnings" hidden></div>
     <div id="mermaid-blocks"></div>
+  </div>
+
+  <!-- Mermaid 텍스트를 붙여넣어 도형/화살표/그룹으로 가져오기. flowchart/mindmap 블록이
+       여러 개 섞여 있어도 되고(각각 캔버스 위 다른 자리에 떨어져 배치된다), 좌표가 없는
+       텍스트라 dagre 로 자동 배치한다. -->
+  <div id="mermaid-import-popup" hidden>
+    <button type="button" id="mermaid-import-close-btn" aria-label="닫기">×</button>
+    <div id="mermaid-import-title">Mermaid 가져오기</div>
+    <p id="mermaid-import-desc">
+      flowchart 또는 mindmap 코드를 붙여넣으세요. 여러 블록을 한 번에 넣으면 각각 따로 떨어뜨려 배치합니다.
+    </p>
+    <textarea
+      id="mermaid-import-text"
+      class="mermaid-text"
+      placeholder="flowchart TD&#10;  A[&quot;시작&quot;] --> B{&quot;확인&quot;}&#10;  B -->|예| C((&quot;완료&quot;))"
+    ></textarea>
+    <div id="mermaid-import-warnings" hidden></div>
+    <button type="button" id="mermaid-import-run-btn" class="sidebar-footer-btn">가져오기</button>
   </div>
 
   <!-- 도형을 그룹 이름표 위로 드래그하는 동안 커서 옆에 뜨는 "OO 그룹에 추가" 배지 -->
@@ -296,6 +316,9 @@
     <button type="button" class="quick-menu-item note-diagram-type-item" data-diagram-type="mindmap">마인드맵</button>
   </div>
 
+  <!-- Mermaid 가져오기의 자동 배치(레이아웃)에 쓴다. 좌표 없는 텍스트에서 좌표를 만들어내는
+       계산은 직접 구현하지 않고 검증된 라이브러리를 그대로 쓴다 — window.dagre 로 노출된다. -->
+  <script src="https://cdn.jsdelivr.net/npm/dagre@0.8.5/dist/dagre.min.js"></script>
   <script src="app.js"></script>
 </body>
 </html>

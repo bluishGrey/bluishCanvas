@@ -48,6 +48,12 @@ const mermaidPopup = document.getElementById("mermaid-popup");
 const mermaidCloseBtn = document.getElementById("mermaid-close-btn");
 const mermaidWarningsEl = document.getElementById("mermaid-warnings");
 const mermaidBlocksEl = document.getElementById("mermaid-blocks");
+const mermaidImportBtn = document.getElementById("mermaid-import-btn");
+const mermaidImportPopup = document.getElementById("mermaid-import-popup");
+const mermaidImportCloseBtn = document.getElementById("mermaid-import-close-btn");
+const mermaidImportTextEl = document.getElementById("mermaid-import-text");
+const mermaidImportWarningsEl = document.getElementById("mermaid-import-warnings");
+const mermaidImportRunBtn = document.getElementById("mermaid-import-run-btn");
 const groupContextMenuEl = document.getElementById("group-context-menu");
 const noteContextMenuEl = document.getElementById("note-context-menu");
 const quickMenuGroupHintEl = document.getElementById("quick-menu-group-hint");
@@ -3793,6 +3799,585 @@ document.addEventListener("click", (e) => {
 });
 document.addEventListener("keydown", (e) => {
   if (e.key === "Escape" && !mermaidPopup.hidden) closeMermaidPopup();
+});
+
+/* ===== Mermaid 가져오기 (텍스트 → 도형/화살표/그룹) =====
+ * Export 의 반대 방향. Mermaid 텍스트에는 좌표가 없으므로, 파싱해서 구조(무엇이 무엇의
+ * 자식/이웃인지)만 알아낸 다음 dagre(검증된 그래프 레이아웃 라이브러리, index.html 에서
+ * CDN 으로 불러온다)로 좌표를 계산한다. 레이아웃 알고리즘 자체를 새로 만들지 않는다.
+ *
+ * 전체 흐름: splitMermaidBlocks(원문 분리) → 블록별 parseFlowchartBlock/parseMindmapBlock
+ * (구조 파악) → layoutBlockWithDagre(블록별 좌표 계산) → placeBlocksOnCanvas(블록끼리 안
+ * 겹치게 배치 + 현재 화면 근처로 이동) → importMermaidText(실제 notes/arrows/groups 로 반영).
+ *
+ * 실패 안전: 파싱/배치 도중 예외가 나거나 블록 일부가 이상해도 기존 캔버스 상태가 절대
+ * 깨지지 않도록, 전부 로컬 임시 배열/카운터에 쌓았다가 마지막에 성공했을 때만 한 번에
+ * notes/arrows/groups 와 nextId/nextArrowId/nextGroupId 에 반영한다(all-or-nothing). */
+
+// ```mermaid 코드펜스, %% 지시문/주석 줄을 치우고, flowchart/graph/mindmap 헤더 줄이 나올
+// 때마다 새 블록을 시작한다. 헤더 이전에 나오는 줄(설명 텍스트 등)은 무시한다.
+function splitMermaidBlocks(rawText) {
+  const lines = rawText.split(/\r?\n/).filter((l) => !/^\s*```/.test(l));
+  const blocks = [];
+  let current = null;
+
+  lines.forEach((line) => {
+    const trimmed = line.trim();
+    if (trimmed.startsWith("%%")) return; // mermaid 지시문/주석
+
+    if (/^(flowchart|graph)\b/i.test(trimmed)) {
+      current = { type: "flowchart", headerLine: trimmed, rawLines: [] };
+      blocks.push(current);
+      return;
+    }
+    if (/^mindmap\b/i.test(trimmed)) {
+      current = { type: "mindmap", headerLine: trimmed, rawLines: [] };
+      blocks.push(current);
+      return;
+    }
+    if (current) current.rawLines.push(line);
+  });
+
+  return blocks;
+}
+
+// 라벨을 감싼 따옴표(있으면)만 벗겨낸다.
+function stripMermaidQuotes(s) {
+  const t = (s || "").trim();
+  if (t.length >= 2 && t[0] === '"' && t[t.length - 1] === '"') return t.slice(1, -1);
+  return t;
+}
+
+/* 플로우차트 한 줄을 앞에서부터 훑으면서 "노드(도형+라벨) → 화살표(+라벨)? → 노드 → ..."
+ * 사슬을 뽑아낸다. `A["시작"] --> B{"확인?"}`, `A --> B --> C`, `A -->|"예"| B`, 따옴표 없는
+ * `A[Start]`, 화살표 없이 노드 선언만 있는 줄(`A["혼자"]`) 을 전부 이 한 함수로 처리한다.
+ * 정규식 하나로 억지로 다 잡으려 하면 캡처 그룹이 감당 안 되게 늘어나서, 대신 위치(i)를
+ * 옮겨가며 조각조각 읽는 손수 스캐너로 짰다. */
+function tokenizeFlowchartLine(line) {
+  let i = 0;
+  const len = line.length;
+  const skipWs = () => {
+    while (i < len && /\s/.test(line[i])) i++;
+  };
+  // id 는 영문/숫자로만 제한하지 않는다 — Claude 나 사용자가 한글로 의미 있는 id를
+  // 그대로 쓰는 경우가 흔해서(이 앱의 목적 자체가 클로드와의 한글 소통), 공백과 도형
+  // 괄호([{()}]|)·화살표에 쓰이는 특수문자(-=<>.)만 빼고는 전부 id 문자로 허용한다.
+  const readId = () => {
+    const m = /^[^\s[\]{}()|\-=<>.]+/.exec(line.slice(i));
+    if (!m) return null;
+    i += m[0].length;
+    return m[0];
+  };
+  // 노드 뒤에 바로 붙는 도형 문법(있으면)을 읽는다. ((원)) 을 [사각형]/{마름모} 보다
+  // 먼저 검사해야 한다 — 안 그러면 "((" 의 첫 "(" 를 다른 문법으로 오인할 일은 없지만
+  // 순서를 명확히 해 둔다.
+  const readShape = () => {
+    if (line.slice(i, i + 2) === "((") {
+      const close = line.indexOf("))", i + 2);
+      if (close === -1) return null;
+      const shape = { shape: "ellipse", label: stripMermaidQuotes(line.slice(i + 2, close)) };
+      i = close + 2;
+      return shape;
+    }
+    if (line[i] === "[") {
+      const close = line.indexOf("]", i + 1);
+      if (close === -1) return null;
+      const shape = { shape: "rect", label: stripMermaidQuotes(line.slice(i + 1, close)) };
+      i = close + 1;
+      return shape;
+    }
+    if (line[i] === "{") {
+      const close = line.indexOf("}", i + 1);
+      if (close === -1) return null;
+      const shape = { shape: "diamond", label: stripMermaidQuotes(line.slice(i + 1, close)) };
+      i = close + 1;
+      return shape;
+    }
+    return null;
+  };
+  const readArrow = () => {
+    const m = /^(-\.->|==>|-->|-\.-|---)/.exec(line.slice(i));
+    if (!m) return null;
+    i += m[0].length;
+    return m[0];
+  };
+  const readEdgeLabel = () => {
+    skipWs();
+    if (line[i] !== "|") return null;
+    const close = line.indexOf("|", i + 1);
+    if (close === -1) return null;
+    const label = stripMermaidQuotes(line.slice(i + 1, close));
+    i = close + 1;
+    return label;
+  };
+
+  const nodeDefs = []; // { id, shape } — shape 는 없으면 null(다른 곳에서 이미 정의됐거나, 라벨 없이 id 그대로 씀)
+  const edges = []; // { from, to, label }
+
+  skipWs();
+  let currentId = readId();
+  if (currentId === null) return { nodeDefs: [], edges: [], ok: false };
+  nodeDefs.push({ id: currentId, shape: readShape() });
+
+  skipWs();
+  for (;;) {
+    const arrow = readArrow();
+    if (!arrow) break;
+    const label = readEdgeLabel();
+    skipWs();
+    const nextId = readId();
+    if (nextId === null) break; // 문법이 깨졌으면 여기까지만 인정하고 멈춘다
+    nodeDefs.push({ id: nextId, shape: readShape() });
+    edges.push({ from: currentId, to: nextId, label });
+    currentId = nextId;
+    skipWs();
+  }
+
+  return { nodeDefs, edges, ok: true };
+}
+
+// 플로우차트 블록 본문(헤더 다음 줄부터)을 구조로 바꾼다. subgraph/end 로 그룹 소속을 추적한다.
+// 그룹 중첩은 앱이 지원하지 않으므로, 중첩됐을 땐 안쪽(가장 가까운) subgraph 가 소속으로 이긴다.
+function parseFlowchartBlock(block) {
+  const dirMatch = /\b(TD|TB|LR|RL|BT)\b/i.exec(block.headerLine);
+  const direction = dirMatch ? dirMatch[1].toUpperCase() : "TD";
+
+  const nodes = new Map(); // mermaidId -> { shape, label }
+  const edges = []; // { from, to, label }
+  const finishedSubgraphs = []; // { name, nodeIds: [] }
+  const stack = []; // 지금 열려 있는 subgraph 들 { name, nodeIds }
+  const skippedLines = [];
+
+  const upsertNode = (id, shape) => {
+    if (!nodes.has(id)) nodes.set(id, { shape: null, label: id });
+    if (shape) {
+      const n = nodes.get(id);
+      n.shape = shape.shape;
+      n.label = shape.label || id;
+    }
+    const owner = stack[stack.length - 1];
+    if (owner && !owner.nodeIds.includes(id)) owner.nodeIds.push(id);
+  };
+
+  block.rawLines.forEach((rawLine) => {
+    const trimmed = rawLine.trim();
+    if (!trimmed) return;
+
+    if (/^end$/i.test(trimmed)) {
+      const closed = stack.pop();
+      if (closed && closed.nodeIds.length > 0) finishedSubgraphs.push(closed);
+      return;
+    }
+
+    // id 부분(대괄호 앞)도 영문/숫자로 제한하지 않는다 — 위 readId/parseMindmapNodeToken 과
+    // 같은 이유로, "subgraph 준비["준비 단계"]" 처럼 한글 id 를 쓴 경우도 대괄호 안의
+    // "준비 단계"만 이름으로 정확히 뽑아내야 한다(공백/대괄호/따옴표만 피하면 id로 허용).
+    const sgMatch = trimmed.match(/^subgraph\s+(?:[^\s[\]"]+\s*\[\s*"?([^"\]]*)"?\s*\]|"([^"]+)"|(.+))$/i);
+    if (sgMatch) {
+      const name = (sgMatch[1] || sgMatch[2] || sgMatch[3] || "").trim() || "그룹";
+      stack.push({ name, nodeIds: [] });
+      return;
+    }
+
+    const { nodeDefs, edges: lineEdges, ok } = tokenizeFlowchartLine(trimmed);
+    if (!ok || nodeDefs.length === 0) {
+      skippedLines.push(rawLine);
+      return;
+    }
+    nodeDefs.forEach((def) => upsertNode(def.id, def.shape));
+    lineEdges.forEach((e) => edges.push(e));
+  });
+
+  // 끝까지 안 닫힌 subgraph 는 닫힌 것으로 간주하고 거둬들인다(문법 오류에도 최대한 살린다).
+  while (stack.length > 0) {
+    const closed = stack.pop();
+    if (closed.nodeIds.length > 0) finishedSubgraphs.push(closed);
+  }
+
+  return { type: "flowchart", direction, nodes, edges, subgraphs: finishedSubgraphs, skippedLines };
+}
+
+// 마인드맵 노드 한 줄(들여쓰기 제거된 상태)을 도형+라벨로 바꾼다. 마인드맵 문법엔 마름모가
+// 없어서 육각형({{}})을 마름모로 되돌리고(내보내기와 대칭), 원({{}}과 구분되는 (()))은
+// 원으로, 사각형([])과 괄호만 있는 둥근 모양(())은 둘 다 사각형으로 단순화한다(이 앱은
+// 도형이 3종류뿐이라 둥근 사각형에 대응하는 게 없다). id 는 있어도 되고 없어도 된다.
+function parseMindmapNodeToken(trimmed) {
+  // id 부분도 영문/숫자로 제한하지 않는다(위 tokenizeFlowchartLine 의 readId 와 같은 이유) —
+  // 공백과 도형 괄호만 피하면 한글 id 도 그대로 허용해서, "가지2{{육각형 잎}}" 같은 줄에서
+  // id="가지2"/라벨="육각형 잎" 로 정확히 갈라지게 한다.
+  const m = /^([^\s(){}[\]]+)?\s*(?:\(\(([^)]*)\)\)|\{\{([^}]*)\}\}|\[([^\]]*)\]|\(([^)]*)\))?$/.exec(trimmed);
+  if (!m) return { shape: "rect", label: trimmed };
+  const [, id, circle, hexagon, square, round] = m;
+  if (circle !== undefined) return { shape: "ellipse", label: circle.trim() || id || trimmed };
+  if (hexagon !== undefined) return { shape: "diamond", label: hexagon.trim() || id || trimmed };
+  if (square !== undefined) return { shape: "rect", label: square.trim() || id || trimmed };
+  if (round !== undefined) return { shape: "rect", label: round.trim() || id || trimmed };
+  return { shape: "rect", label: (id || trimmed).trim() };
+}
+
+// 마인드맵 블록 본문을 들여쓰기 기준 트리로 바꾼다. 들여쓰기 스택(indent, id)을 유지하면서,
+// 현재 줄보다 들여쓰기가 얕거나 같은 항목을 스택에서 걷어내면 남는 맨 위가 부모다.
+function parseMindmapBlock(block) {
+  const nodes = new Map(); // 합성 id(m0, m1, ...) -> { shape, label }
+  const edges = []; // { from, to }
+  const stack = []; // { indent, id }
+  const warnings = [];
+  let root = null;
+  let autoId = 0;
+
+  block.rawLines.forEach((rawLine) => {
+    if (!rawLine.trim()) return;
+    const indent = rawLine.length - rawLine.trimStart().length;
+    const info = parseMindmapNodeToken(rawLine.trim());
+    const id = `m${autoId++}`;
+    nodes.set(id, info);
+
+    while (stack.length > 0 && stack[stack.length - 1].indent >= indent) stack.pop();
+
+    if (stack.length === 0) {
+      if (root === null) {
+        root = id;
+      } else {
+        // 마인드맵은 중심이 하나여야 하는데 최상위 줄이 또 나왔다 — 텍스트 형태는 최대한
+        // 살리기 위해 원래 루트의 자식으로 편입한다(완전히 버리지 않는다).
+        edges.push({ from: root, to: id });
+        warnings.push(`최상위 항목이 여러 개 있어 "${info.label}"을(를) 루트 하위로 편입했습니다.`);
+      }
+    } else {
+      edges.push({ from: stack[stack.length - 1].id, to: id });
+    }
+    stack.push({ indent, id });
+  });
+
+  return { type: "mindmap", nodes, edges, root, warnings };
+}
+
+// 원문 전체를 블록으로 나누고 각각 구조를 파싱한다. 블록이 하나도 안 나오면(= flowchart나
+// mindmap 헤더를 하나도 못 찾음) errors 에 담아 호출자가 바로 알 수 있게 한다.
+function parseMermaidImportText(text) {
+  const rawBlocks = splitMermaidBlocks(text);
+  const errors = [];
+  if (rawBlocks.length === 0) {
+    errors.push('flowchart, graph, mindmap 로 시작하는 블록을 찾지 못했습니다. Mermaid 코드를 그대로 붙여넣어 주세요.');
+    return { blocks: [], errors };
+  }
+
+  const blocks = rawBlocks
+    .map((b) => (b.type === "flowchart" ? parseFlowchartBlock(b) : parseMindmapBlock(b)))
+    .filter((b) => {
+      if (b.nodes.size === 0) {
+        errors.push(`${b.type === "flowchart" ? "flowchart" : "mindmap"} 블록에 도형이 하나도 없어 건너뛰었습니다.`);
+        return false;
+      }
+      return true;
+    });
+
+  return { blocks, errors };
+}
+
+/* ----- dagre 로 블록별 좌표 계산 ----- */
+
+const MERMAID_IMPORT_NODESEP = 40;
+const MERMAID_IMPORT_RANKSEP = 70;
+
+// dagre 방향 문자열로 맞춘다 — Mermaid 의 TD(top-down)는 dagre 에는 없고 TB 와 같다.
+function toDagreRankDir(direction) {
+  if (direction === "TD") return "TB";
+  if (["TB", "LR", "RL", "BT"].includes(direction)) return direction;
+  return "TB";
+}
+
+// flowchart: subgraph 를 dagre 의 "compound"(묶음) 노드로 등록해서, 묶인 도형들이
+// 레이아웃에서도 서로 가까이 모이게 한다. mindmap: 그룹 개념이 없는 평범한 트리라
+// compound 없이 그냥 부모→자식 엣지만 넣는다. 두 경우 다 결과는 같은 모양
+// (mermaidId -> {x, y}, dagre 기준 노드 "중심" 좌표)으로 돌려준다.
+function layoutBlockWithDagre(block) {
+  const g = new dagre.graphlib.Graph({ compound: true });
+  const rankdir = block.type === "flowchart" ? toDagreRankDir(block.direction) : "LR";
+  g.setGraph({ rankdir, nodesep: MERMAID_IMPORT_NODESEP, ranksep: MERMAID_IMPORT_RANKSEP, marginx: 20, marginy: 20 });
+  g.setDefaultEdgeLabel(() => ({}));
+
+  block.nodes.forEach((info, id) => {
+    g.setNode(id, { width: DEFAULT_NOTE_W, height: DEFAULT_NOTE_H });
+  });
+  block.edges.forEach((e) => {
+    if (!block.nodes.has(e.from) || !block.nodes.has(e.to) || e.from === e.to) return;
+    g.setEdge(e.from, e.to);
+  });
+
+  if (block.type === "flowchart") {
+    block.subgraphs.forEach((sg, idx) => {
+      const clusterId = `__cluster${idx}`;
+      g.setNode(clusterId, {});
+      sg.nodeIds.forEach((id) => {
+        if (block.nodes.has(id)) g.setParent(id, clusterId);
+      });
+    });
+  }
+
+  dagre.layout(g);
+
+  const positions = new Map();
+  block.nodes.forEach((info, id) => {
+    const n = g.node(id);
+    positions.set(id, { x: n.x, y: n.y });
+  });
+  return positions;
+}
+
+// 블록 하나의 노드 좌표들로부터 그 블록이 차지하는 월드 경계 상자를 구한다.
+function boundsOfPositions(positions) {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  positions.forEach(({ x, y }) => {
+    minX = Math.min(minX, x - DEFAULT_NOTE_W / 2);
+    maxX = Math.max(maxX, x + DEFAULT_NOTE_W / 2);
+    minY = Math.min(minY, y - DEFAULT_NOTE_H / 2);
+    maxY = Math.max(maxY, y + DEFAULT_NOTE_H / 2);
+  });
+  return { minX, minY, maxX, maxY };
+}
+
+const MERMAID_IMPORT_BLOCK_GAP = 100;
+const MERMAID_IMPORT_ROW_MAX_WIDTH = 1600;
+
+// 블록마다 이미 계산된(dagre) 상대 좌표들을, 서로 겹치지 않도록 줄줄이 늘어놓은 뒤(왼쪽→
+// 오른쪽, 폭이 넘치면 다음 줄로) 전체 묶음의 중심이 지금 보이는 화면 한가운데에 오도록
+// 한 번에 옮긴다 — "화면 밖 저 멀리에 그려지지 않도록"(요구사항 5)의 구현.
+function placeBlocksOnCanvas(blocks, blockPositions) {
+  let cursorX = 0;
+  let cursorY = 0;
+  let rowHeight = 0;
+  const blockOffsets = [];
+
+  blocks.forEach((block, idx) => {
+    const bounds = boundsOfPositions(blockPositions[idx]);
+    const width = bounds.maxX - bounds.minX;
+    const height = bounds.maxY - bounds.minY;
+
+    if (cursorX > 0 && cursorX + width > MERMAID_IMPORT_ROW_MAX_WIDTH) {
+      cursorX = 0;
+      cursorY += rowHeight + MERMAID_IMPORT_BLOCK_GAP;
+      rowHeight = 0;
+    }
+
+    // dagre 좌표의 bounds.min* 을 이 줄의 cursorX/Y 에 맞춰 평행이동하는 오프셋.
+    blockOffsets.push({ x: cursorX - bounds.minX, y: cursorY - bounds.minY });
+
+    cursorX += width + MERMAID_IMPORT_BLOCK_GAP;
+    rowHeight = Math.max(rowHeight, height);
+  });
+
+  // 지금까지는 (0,0) 근처의 임의 좌표계 — 전체 묶음의 중심을 계산해서, 그 중심이 현재
+  // 화면 뷰포트의 중심(월드 좌표)에 오도록 마지막으로 한 번 더 평행이동한다.
+  let overallMinX = Infinity, overallMinY = Infinity, overallMaxX = -Infinity, overallMaxY = -Infinity;
+  blocks.forEach((block, idx) => {
+    const bounds = boundsOfPositions(blockPositions[idx]);
+    const off = blockOffsets[idx];
+    overallMinX = Math.min(overallMinX, bounds.minX + off.x);
+    overallMinY = Math.min(overallMinY, bounds.minY + off.y);
+    overallMaxX = Math.max(overallMaxX, bounds.maxX + off.x);
+    overallMaxY = Math.max(overallMaxY, bounds.maxY + off.y);
+  });
+
+  const canvasRect = canvas.getBoundingClientRect();
+  const viewportCenter = screenToWorld(
+    canvasRect.left + canvasRect.width / 2,
+    canvasRect.top + canvasRect.height / 2
+  );
+  const contentCenterX = (overallMinX + overallMaxX) / 2;
+  const contentCenterY = (overallMinY + overallMaxY) / 2;
+  const finalOffsetX = viewportCenter.x - contentCenterX;
+  const finalOffsetY = viewportCenter.y - contentCenterY;
+
+  return blockOffsets.map((off) => ({ x: off.x + finalOffsetX, y: off.y + finalOffsetY }));
+}
+
+/* ----- 파싱+배치 결과를 실제 캔버스 상태로 반영 ----- */
+
+// 파싱된 블록들로부터 실제 notes/arrows/groups 를 만든다. 실패해도 기존 상태가 절대
+// 오염되지 않도록, notes/arrows/groups·id 카운터를 전부 로컬 변수에 먼저 쌓았다가
+// 끝에서 한 번에(all-or-nothing) 실제 전역 상태에 반영하고 commitChange() 한 번으로
+// 실행취소 한 단계에 묶는다.
+function importMermaidText(text) {
+  const { blocks, errors } = parseMermaidImportText(text);
+  if (blocks.length === 0) {
+    return { ok: false, errors, warnings: [] };
+  }
+
+  const warnings = [...errors];
+  blocks.forEach((b) => {
+    if (b.type === "flowchart" && b.skippedLines && b.skippedLines.length > 0) {
+      warnings.push(`flowchart 블록에서 알아볼 수 없는 줄 ${b.skippedLines.length}개를 건너뛰었습니다.`);
+    }
+    if (b.type === "mindmap" && b.warnings.length > 0) {
+      warnings.push(...b.warnings);
+    }
+  });
+
+  const blockPositions = blocks.map(layoutBlockWithDagre);
+  const blockOffsets = placeBlocksOnCanvas(blocks, blockPositions);
+
+  let localNextId = nextId;
+  let localNextArrowId = nextArrowId;
+  let localNextGroupId = nextGroupId;
+  const newNotes = [];
+  const newArrows = [];
+  const newGroups = [];
+  const idMap = new Map(); // `${blockIdx}:${mermaidId}` -> 새 note id
+
+  blocks.forEach((block, idx) => {
+    const positions = blockPositions[idx];
+    const offset = blockOffsets[idx];
+    block.nodes.forEach((info, mermaidId) => {
+      const center = positions.get(mermaidId);
+      const note = {
+        id: localNextId++,
+        x: center.x + offset.x - DEFAULT_NOTE_W / 2,
+        y: center.y + offset.y - DEFAULT_NOTE_H / 2,
+        w: DEFAULT_NOTE_W,
+        h: DEFAULT_NOTE_H,
+        text: info.label || "",
+        shape: info.shape || "rect",
+        bg: null,
+        fontSize: DEFAULT_FONT_SIZE,
+        textAlign: DEFAULT_TEXT_ALIGN,
+        borderWidth: DEFAULT_BORDER_WIDTH,
+        diagramType: block.type,
+      };
+      newNotes.push(note);
+      idMap.set(`${idx}:${mermaidId}`, note.id);
+    });
+  });
+
+  blocks.forEach((block, idx) => {
+    block.edges.forEach((e) => {
+      const fromId = idMap.get(`${idx}:${e.from}`);
+      const toId = idMap.get(`${idx}:${e.to}`);
+      if (fromId == null || toId == null || fromId === toId) return;
+      const arrow = { id: localNextArrowId++, fromId, toId };
+      if (e.label) arrow.label = e.label;
+      newArrows.push(arrow);
+    });
+  });
+
+  blocks.forEach((block, idx) => {
+    if (block.type === "flowchart") {
+      block.subgraphs.forEach((sg) => {
+        const noteIds = sg.nodeIds.map((mid) => idMap.get(`${idx}:${mid}`)).filter((id) => id != null);
+        if (noteIds.length === 0) return;
+        const gid = localNextGroupId++;
+        newGroups.push({ id: `g${gid}`, name: sg.name || `그룹 ${gid}`, noteIds, locked: false });
+      });
+    } else {
+      const noteIds = [...block.nodes.keys()].map((mid) => idMap.get(`${idx}:${mid}`)).filter((id) => id != null);
+      if (noteIds.length === 0) return;
+      const gid = localNextGroupId++;
+      const rootNoteId = idMap.get(`${idx}:${block.root}`);
+      const rootNote = newNotes.find((n) => n.id === rootNoteId);
+      const name = (rootNote && rootNote.text.trim()) || `마인드맵 ${gid}`;
+      newGroups.push({ id: `g${gid}`, name, noteIds, locked: false });
+    }
+  });
+
+  // ---- 여기까지 전부 로컬이었다. 이제 진짜 상태에 한 번에 반영한다. ----
+  nextId = localNextId;
+  nextArrowId = localNextArrowId;
+  nextGroupId = localNextGroupId;
+  newNotes.forEach((note) => {
+    notes.push(note);
+    renderNote(note);
+  });
+  newArrows.forEach((arrow) => {
+    arrows.push(arrow);
+    renderArrow(arrow);
+  });
+  newGroups.forEach((group) => groups.push(group));
+
+  renderGroups();
+  updateAllArrowGeometry();
+  commitChange();
+
+  return {
+    ok: true,
+    errors: [],
+    warnings,
+    counts: { notes: newNotes.length, arrows: newArrows.length, groups: newGroups.length },
+  };
+}
+
+/* ----- Mermaid 가져오기 팝업 UI ----- */
+
+function openMermaidImportPopup() {
+  mermaidImportWarningsEl.hidden = true;
+  mermaidImportWarningsEl.innerHTML = "";
+  mermaidImportPopup.hidden = false;
+  mermaidImportTextEl.focus();
+}
+
+function closeMermaidImportPopup() {
+  mermaidImportPopup.hidden = true;
+}
+
+function showMermaidImportMessages(messages) {
+  if (messages.length === 0) {
+    mermaidImportWarningsEl.hidden = true;
+    mermaidImportWarningsEl.innerHTML = "";
+    return;
+  }
+  mermaidImportWarningsEl.hidden = false;
+  mermaidImportWarningsEl.innerHTML = "";
+  const list = document.createElement("ul");
+  messages.forEach((text) => {
+    const item = document.createElement("li");
+    item.textContent = text;
+    list.appendChild(item);
+  });
+  mermaidImportWarningsEl.appendChild(list);
+}
+
+mermaidImportRunBtn.addEventListener("click", () => {
+  const text = mermaidImportTextEl.value;
+  if (!text.trim()) {
+    showMermaidImportMessages(["붙여넣은 텍스트가 없습니다."]);
+    return;
+  }
+
+  let result;
+  try {
+    result = importMermaidText(text);
+  } catch (err) {
+    showMermaidImportMessages([`가져오는 중 문제가 발생했습니다: ${err.message || err}`]);
+    return;
+  }
+
+  if (!result.ok) {
+    showMermaidImportMessages(result.errors);
+    return;
+  }
+
+  showMermaidImportMessages(result.warnings);
+  const { notes: n, arrows: a, groups: g } = result.counts;
+  alert(`가져오기 완료: 도형 ${n}개, 화살표 ${a}개, 그룹 ${g}개`);
+  mermaidImportTextEl.value = "";
+  // 건너뛴 게 있으면(경고 있음) 팝업을 바로 닫지 않고 남겨서 무엇이 빠졌는지 읽을 시간을 준다.
+  if (result.warnings.length === 0) closeMermaidImportPopup();
+});
+
+mermaidImportBtn.addEventListener("click", openMermaidImportPopup);
+mermaidImportCloseBtn.addEventListener("click", closeMermaidImportPopup);
+document.addEventListener("click", (e) => {
+  if (mermaidImportPopup.hidden) return;
+  if (
+    mermaidImportPopup.contains(e.target) ||
+    e.target === mermaidImportBtn ||
+    mermaidImportBtn.contains(e.target)
+  ) {
+    return;
+  }
+  closeMermaidImportPopup();
+});
+document.addEventListener("keydown", (e) => {
+  if (e.key === "Escape" && !mermaidImportPopup.hidden) closeMermaidImportPopup();
 });
 
 /* ===== 캔버스(현재 페이지) 메모 검색 (Ctrl+F) ===== */

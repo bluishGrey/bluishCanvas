@@ -725,6 +725,22 @@ body {
   color: var(--accent);
 }
 
+#mermaid-import-btn {
+  border: 1px solid var(--note-border);
+  background: #fff;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 11.5px;
+  color: #55617a;
+  cursor: pointer;
+}
+
+#mermaid-import-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 /* ===== Mermaid 내보내기 팝업 ===== */
 #mermaid-popup {
   position: fixed;
@@ -745,7 +761,8 @@ body {
   display: none;
 }
 
-#mermaid-title {
+#mermaid-title,
+#mermaid-import-title {
   font-weight: 700;
   font-size: 14px;
   color: var(--text);
@@ -753,7 +770,8 @@ body {
   padding-right: 20px;
 }
 
-#mermaid-close-btn {
+#mermaid-close-btn,
+#mermaid-import-close-btn {
   position: absolute;
   top: 10px;
   right: 12px;
@@ -766,11 +784,13 @@ body {
   padding: 2px;
 }
 
-#mermaid-close-btn:hover {
+#mermaid-close-btn:hover,
+#mermaid-import-close-btn:hover {
   color: var(--accent);
 }
 
-#mermaid-warnings {
+#mermaid-warnings,
+#mermaid-import-warnings {
   margin-bottom: 12px;
   padding: 8px 10px;
   border-radius: 8px;
@@ -781,9 +801,48 @@ body {
   color: #7a6320;
 }
 
-#mermaid-warnings ul {
+#mermaid-warnings ul,
+#mermaid-import-warnings ul {
   margin: 0;
   padding-left: 16px;
+}
+
+/* ===== Mermaid 가져오기 팝업 (텍스트 입력형이라 내보내기 팝업과 달리 화면 가운데에 모달처럼 띄운다) ===== */
+#mermaid-import-popup {
+  position: fixed;
+  top: 50%;
+  left: calc(var(--sidebar-w) + (100% - var(--sidebar-w)) / 2);
+  transform: translate(-50%, -50%);
+  width: 480px;
+  max-width: calc(100vw - var(--sidebar-w) - 28px);
+  max-height: calc(100vh - 60px);
+  overflow-y: auto;
+  background: #fff;
+  border-radius: 10px;
+  box-shadow: 0 16px 48px rgba(31, 39, 51, 0.3);
+  padding: 16px 18px;
+  z-index: 30;
+}
+
+#mermaid-import-popup[hidden] {
+  display: none;
+}
+
+#mermaid-import-desc {
+  margin: 0 0 10px;
+  font-size: 11.5px;
+  line-height: 1.5;
+  color: #7c879c;
+}
+
+#mermaid-import-text {
+  min-height: 220px;
+}
+
+#mermaid-import-run-btn {
+  width: 100%;
+  box-sizing: border-box;
+  margin-top: 10px;
 }
 
 .mermaid-block {
