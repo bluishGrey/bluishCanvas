@@ -4530,14 +4530,25 @@ function layoutBlockWithDagre(block, sizes) {
  *
  * 부채꼴 폭을 좁게 강제하면 부작용으로, 한 부모 밑에 형제가 아주 많은 경우(예: 한
  * 가지에 자식 10개) 그 좁은 폭 안에 다 욱여넣다 보니 형제끼리 각도 간격이 너무
- * 촘촘해져 실제로 겹칠 수 있다. 그래서 간선 길이(edgeLength)를 "박스 크기 기준
- * 기본값"과 "이 트리에서 형제가 가장 촘촘하게 몰린 지점이 실제로 안 겹치려면
- * 필요한 값" 중 더 큰 쪽으로 정한다 — 부모 기준 재귀 모델에서는 한 부모의 모든
- * 자식이 정확히 반지름 edgeLength 인 원 위에 있으므로(부모가 어디에 있든), 그 원에서
- * 형제 사이 호(arc) 길이가 항상 안전한 최소값 이상이 되도록 edgeLength 하나를
- * 전역적으로 정하면 트리 전체에서 형제끼리 안 겹치는 게 보장된다. */
+ * 촘촘해져 실제로 겹칠 수 있다. 그래서 간선 길이(edgeLength)는 "플로우차트(dagre)의
+ * 기본 레벨 간격과 비슷한 짧은 기본값"에서 시작해서, 실제로 겹칠 위험이 있는 만큼만
+ * 필요한 최소한으로 늘어난다(짧게 유지가 먼저, 겹침 방지가 그 다음이 아니라 —
+ * 겹침 방지가 항상 최우선이고, 그걸 만족하는 한 최대한 짧게 유지한다는 뜻) — 아래
+ * 두 가지 위험을 각각 확인해서 더 큰 쪽을 반영한다:
+ *  1) 부모→자식 정렬 겹침: 같은 각도로 쭉 이어지는 사슬(자식이 하나뿐인 노드가
+ *     연달아 있는 경우)은 부모와 자식이 거의 같은 방향에 있어서, 그 방향으로 두
+ *     도형이 서로 밀고 들어갈 수 있다. 두 도형의 실제 크기(자동 높이조정 포함)와
+ *     둘 사이의 각도 차이로부터, "이 두 도형이 딱 안 겹치는 최소 거리"를 축별
+ *     겹침 회피 공식(가로 차가 두 반너비 합 이상이거나, 세로 차가 두 반높이 합
+ *     이상이면 안 겹침 — 둘 중 하나만 만족하면 되므로 더 작은 쪽을 취함)으로
+ *     정확히 계산해서 모든 부모-자식 쌍 중 최댓값을 쓴다.
+ *  2) 형제끼리 부채꼴 안에서 너무 촘촘함: 부모 기준 재귀 모델에서는 한 부모의 모든
+ *     자식이 정확히 반지름 edgeLength 인 원 위에 있으므로, 그 원에서 형제 사이
+ *     호(arc) 길이가 항상 안전한 최소값 이상이 되도록 부모마다 역산해서 최댓값을
+ *     쓴다. */
 
-const MINDMAP_RADIAL_EDGE_MARGIN = 60; // 부모-자식 간선 길이(edgeLength)에 도형 크기 위에 추가로 두는 여백
+const MINDMAP_RADIAL_BASE_EDGE_LENGTH = DEFAULT_NOTE_H + MERMAID_IMPORT_RANKSEP; // dagre 의 부모-자식 기본 간격과 비슷한 짧은 기본값
+const MINDMAP_RADIAL_EDGE_MARGIN = 60; // 겹침 회피 최소 거리 위에 추가로 두는 여백
 const MINDMAP_BRANCH_SECTOR_MARGIN = 1.15; // 가지별 부채꼴 반폭에 곱하는 여유 배수(15%)
 
 // { id, children } 형태의 중첩 객체로 바꾼다 — d3.hierarchy() 가 기대하는 입력 모양.
@@ -4547,6 +4558,19 @@ function buildMindmapTreeNode(id, childrenOf) {
 
 const MINDMAP_TREE_SEPARATION = (a, b) => (a.parent === b.parent ? 1 : 2) / Math.max(a.depth, 1);
 
+// 두 축 정렬 사각형(반너비/반높이가 각각 hw1,hh1 / hw2,hh2)이 중심 각도 차 angleDiff
+// 방향으로 거리 d 만큼 떨어져 있을 때, 겹치지 않는 최소 d — 가로 방향으로 필요한
+// 거리(hw1+hw2를 그 방향의 가로 성분(cos)으로 나눈 값)와 세로 방향으로 필요한
+// 거리(hh1+hh2 를 세로 성분(sin)으로 나눈 값) 중 하나만 만족하면 안 겹치므로
+// (박스 겹침은 가로·세로 둘 다 겹쳐야 성립) 둘 중 더 작은 쪽을 쓴다.
+function minNonOverlapDistance(angleDiff, hw1, hh1, hw2, hh2) {
+  const cosA = Math.abs(Math.cos(angleDiff));
+  const sinA = Math.abs(Math.sin(angleDiff));
+  const viaWidth = cosA > 1e-9 ? (hw1 + hw2) / cosA : Infinity;
+  const viaHeight = sinA > 1e-9 ? (hh1 + hh2) / sinA : Infinity;
+  return Math.min(viaWidth, viaHeight);
+}
+
 function layoutMindmapRadial(block, sizes) {
   const childrenOf = new Map();
   block.nodes.forEach((info, id) => childrenOf.set(id, []));
@@ -4555,13 +4579,7 @@ function layoutMindmapRadial(block, sizes) {
   });
 
   const root = d3.hierarchy(buildMindmapTreeNode(block.root, childrenOf));
-
-  // 부모-자식 간선 길이의 기본값 — 그 블록에서 가장 큰 도형(자동 높이조정으로 세로가
-  // 길어진 경우 포함)을 기준으로 잡는다. 부채꼴 폭 제약 때문에 이걸로 부족하면
-  // 아래에서 더 키운다.
-  let maxBoxDim = Math.max(DEFAULT_NOTE_W, DEFAULT_NOTE_H);
-  sizes.forEach((s) => { maxBoxDim = Math.max(maxBoxDim, s.w, s.h); });
-  const baseEdgeLength = maxBoxDim + MINDMAP_RADIAL_EDGE_MARGIN;
+  const sizeOf = (id) => sizes.get(id) || { w: DEFAULT_NOTE_W, h: DEFAULT_NOTE_H };
 
   // 루트 기준 "원시" 각도(라디안, 0=오른쪽 기준) — 마지막에 한꺼번에 -90°(위쪽 기준)로 돌린다.
   const rawAngleOf = new Map();
@@ -4589,21 +4607,46 @@ function layoutMindmapRadial(block, sizes) {
     });
   }
 
-  // 부채꼴로 좁혀진 각도 때문에 형제끼리 너무 촘촘해진 곳이 있는지 확인해서, 필요하면
-  // edgeLength 를 키운다 — 부모 기준 재귀 모델에서는 어느 부모든 그 자식들이 정확히
-  // 반지름 edgeLength 인 원 위에 있으므로, "부모 하나당 자식들 사이 최소 각도 간격"×
-  // edgeLength(호 길이)가 baseEdgeLength(도형이 안 겹치는 최소 간격) 이상이 되도록
-  // 모든 부모에 대해 역산해서 가장 큰 값을 쓴다.
-  let edgeLength = baseEdgeLength;
+  let edgeLength = MINDMAP_RADIAL_BASE_EDGE_LENGTH;
+
+  // 위험 1: 부모→자식이 거의 같은 각도로 이어지는 사슬에서, 실제 도형 크기 기준으로
+  // 안 겹치는 최소 간선 길이를 모든 부모-자식 쌍에 대해 계산해서 최댓값을 쓴다.
+  // 겹침 판정에 필요한 건 "부모의 각도와 자식의 각도 차이"가 아니라 "부모→자식을
+  // 잇는 선분이 전역 좌표계에서 실제로 향하는 방향"이다 — 이 방향은 항상 자식 자신의
+  // 각도(에 최종 -90도 회전을 적용한 값, 최종 배치 때 쓰는 것과 동일)이지 부모 각도와는
+  // 무관하다(부모, 특히 루트는 "자기 고유의 방향"이라는 개념 자체가 없다). 부모 각도를
+  // 빼는 실수를 하면(이전 버전의 버그) 예를 들어 루트→첫 가지처럼 무관한 두 각도가 우연히
+  // 같아져 "완전히 정렬됨"으로 잘못 판정되거나, 반대로 진짜 정렬된 사슬에서 필요한
+  // 세로 여유 대신 엉뚱한 가로 여유를 계산해 실제로 겹치는 사고(폭보다 훨씬 큰 자동
+  // 높이조정 도형에서 확인됨)로 이어진다.
+  root.each((node) => {
+    if (node.depth === 0) return;
+    const parentSize = sizeOf(node.parent.data.id);
+    const childSize = sizeOf(node.data.id);
+    const edgeAngle = rawAngleOf.get(node.data.id) - Math.PI / 2;
+    const needed =
+      minNonOverlapDistance(edgeAngle, parentSize.w / 2, parentSize.h / 2, childSize.w / 2, childSize.h / 2) +
+      MINDMAP_RADIAL_EDGE_MARGIN;
+    edgeLength = Math.max(edgeLength, needed);
+  });
+
+  // 위험 2: 부채꼴로 좁혀진 각도 때문에 형제끼리 너무 촘촘해진 곳이 있는지 확인해서,
+  // 필요하면 edgeLength 를 키운다 — 부모 기준 재귀 모델에서는 어느 부모든 그 자식들이
+  // 정확히 반지름 edgeLength 인 원 위에 있으므로, "부모 하나당 인접한 형제 사이 최소
+  // 각도 간격"×edgeLength(호 길이)가 그 형제 쌍의 실제 폭(반너비 합)+여백 이상이
+  // 되도록 모든 부모에 대해 역산해서 가장 큰 값을 쓴다.
   root.each((node) => {
     const kids = node.children;
     if (!kids || kids.length < 2) return;
-    const angles = kids.map((k) => rawAngleOf.get(k.data.id)).sort((a, b) => a - b);
-    let minGap = Infinity;
-    for (let i = 1; i < angles.length; i++) minGap = Math.min(minGap, angles[i] - angles[i - 1]);
-    if (!(minGap > 0)) return; // 각도가 완전히 같은 경우(자식 1개 등) 방지
-    const neededEdgeLength = baseEdgeLength / minGap;
-    edgeLength = Math.max(edgeLength, neededEdgeLength);
+    const sorted = kids.map((k) => ({ id: k.data.id, angle: rawAngleOf.get(k.data.id) })).sort((a, b) => a.angle - b.angle);
+    for (let i = 1; i < sorted.length; i++) {
+      const gap = sorted[i].angle - sorted[i - 1].angle;
+      if (!(gap > 0)) continue; // 각도가 완전히 같은 경우 방지
+      const sizeA = sizeOf(sorted[i - 1].id);
+      const sizeB = sizeOf(sorted[i].id);
+      const neededArc = sizeA.w / 2 + sizeB.w / 2 + MINDMAP_RADIAL_EDGE_MARGIN;
+      edgeLength = Math.max(edgeLength, neededArc / gap);
+    }
   });
 
   // 직속 부모 기준 재귀 배치: 각 노드 = 부모 위치 + edgeLength * (자기 각도 방향).
