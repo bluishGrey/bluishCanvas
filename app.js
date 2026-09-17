@@ -4432,13 +4432,25 @@ function toDagreRankDir(direction) {
 }
 
 // 블록 안의 노드마다, 라벨이 기본 크기(DEFAULT_NOTE_W x DEFAULT_NOTE_H)에 넘치지 않고
-// 들어갈 크기를 미리 재둔다 — dagre 가 서로 겹치지 않게 간격을 잡을 때부터 이 실제
-// 크기를 알아야(레이아웃 이후에 키우면 다른 도형과 겹칠 수 있다) 하므로 레이아웃보다
-// 먼저 계산한다. 너비는 항상 기본값 그대로 유지한다(다이어그램 전체가 들쭉날쭉한
+// 들어갈 크기를 미리 재둔다 — dagre/방사형 레이아웃이 서로 겹치지 않게 간격을 잡을 때부터
+// 이 실제 크기를 알아야(레이아웃 이후에 키우면 다른 도형과 겹칠 수 있다) 하므로 레이아웃보다
+// 먼저 계산한다. 너비는 기본적으로 항상 기본값 그대로 유지한다(다이어그램 전체가 들쭉날쭉한
 // 너비로 나열되면 어색해서, 일반 도형 목록처럼 통일된 너비 안에서 세로만 늘린다).
-function computeBlockNodeSizes(block) {
+//
+// sizeOverrideFor(선택, mermaidId -> {w,h} | null): 재배치(rearrange) 전용 — 수동으로
+// 리사이즈한(autoSize=false) 도형은 이 "텍스트 기준 이상적 크기" 계산을 건너뛰고 실제
+// 크기를 그대로 써야 한다. 안 그러면 레이아웃(spacing)도, 최종 배치(중심점 기준 절반폭
+// 이동)도 전부 실제보다 훨씬 작은 크기를 가정하게 되어, 그 도형이 이웃 도형·그룹 영역을
+// 침범해 겹치고(재배치 때마다 그 침범분이 다음 재배치의 "이 범위의 중심"에도 그대로
+// 반영되어 매번 같은 방향으로 더 밀리는 누적 드리프트까지 생긴다).
+function computeBlockNodeSizes(block, sizeOverrideFor) {
   const sizes = new Map();
   block.nodes.forEach((info, id) => {
+    const override = sizeOverrideFor && sizeOverrideFor(id);
+    if (override) {
+      sizes.set(id, override);
+      return;
+    }
     const h = measureNoteFitHeight(
       info.label,
       info.shape || "rect",
@@ -4876,7 +4888,18 @@ function rearrangeNotes(targetNoteIds) {
   });
   const anchorCenter = { x: (ax0 + ax1) / 2, y: (ay0 + ay1) / 2 };
 
-  const blockSizes = blocks.map(computeBlockNodeSizes);
+  // 수동으로 리사이즈한 도형(autoSize=false)은 실제 현재 크기를 그대로 레이아웃에
+  // 반영한다 — 텍스트 기준 "이상적인" 작은 크기로 간격을 잡으면 실제로는 그보다 훨씬
+  // 크게 그려지는 도형이 이웃 도형·그룹과 겹치게 된다.
+  const sizeOverrideFor = (mermaidId) => {
+    const m = /^N(\d+)$/.exec(mermaidId);
+    if (!m) return null;
+    const note = getNote(Number(m[1]));
+    if (!note || note.autoSize !== false) return null;
+    return { w: note.w, h: note.h };
+  };
+
+  const blockSizes = blocks.map((block) => computeBlockNodeSizes(block, sizeOverrideFor));
   const blockPositions = blocks.map((block, idx) => layoutBlock(block, blockSizes[idx]));
   const blockOffsets = placeBlocksAtCenter(blocks, blockPositions, blockSizes, anchorCenter.x, anchorCenter.y);
 
