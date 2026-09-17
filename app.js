@@ -3683,15 +3683,17 @@ function flowchartNodeLine(note) {
   }
 }
 
-// 마인드맵 문법이 실제로 지원하는 도형은 사각형([])·육각형({{}})뿐이다. 나머지(분기/
-// 시작·끝/입력/출력)는 대응 모양이 없어서 가장 비슷한 형태로 대체한다 — 분기는 둥근
-// 사각형(()), 시작/끝은 원((())), 입력·출력은 그냥 사각형([])으로. 실제로 대체가 일어난
-// 도형 모양의 집합은 generateMermaid() 가 usedMindmapFallbackShapes 로 모아서 한 번에
-// 경고로 알려준다(도형 하나하나마다 경고를 늘어놓지 않는다).
-const MINDMAP_UNSUPPORTED_SHAPES = new Set(["diamond", "stadium", "parallelogram", "parallelogram-rev"]);
+// 마인드맵 문법은 4가지 도형 토큰을 구분한다: 사각형([])·육각형({{}})·둥근사각형(())·
+// 원((())). 분기는 둥근사각형, 시작/끝은 원으로 대응시켜서(mindmapNodeLine 참고)
+// parseMindmapNodeToken 이 다시 정확히 그 도형으로 되돌리므로, 이 넷은 마인드맵을
+// 왕복해도 도형 정보가 안 사라진다(문법만 flowchart 때와 다를 뿐). 입력/출력만은
+// 구분되는 마인드맵 토큰이 아예 없어서 — 대응시킬 게 없어 둘 다 그냥 사각형([])으로
+// 나가고, 그러면 원래의 단계(rect)와도 구분이 안 돼 도형 정보가 실제로 사라진다.
+// 그래서 "마인드맵에 없는 도형"은 이 둘뿐이고, 이 집합은 두 군데서 같이 쓴다:
+// generateMermaid() 의 경고 문구(도형 하나하나가 아니라 한 번에 모아서 알려줌)와
+// rearrangeNotes() 가 재배치 후 실제 도형을 무엇으로 바꿀지 판단할 때.
+const MINDMAP_UNSUPPORTED_SHAPES = new Set(["parallelogram", "parallelogram-rev"]);
 const MINDMAP_FALLBACK_DESC = {
-  diamond: "둥근 사각형",
-  stadium: "원",
   parallelogram: "사각형",
   "parallelogram-rev": "사각형",
 };
@@ -4220,18 +4222,24 @@ function parseFlowchartBlock(block) {
 // 원((())) → 시작/끝(stadium 을 원으로 내보냈던 것), 둥근사각형(()) → 분기(마름모를 둥근
 // 사각형으로 내보냈던 것), 사각형([]) → 단계. 입력/출력은 둘 다 사각형([])으로 뭉개져서
 // 나가므로(마인드맵에 대응 모양이 없어서) 다시 구분해 낼 방법이 없다 — 사각형으로 들어온다.
+// id(있으면)도 같이 돌려준다 — mindmapNodeLine 은 항상 N<note.id> 형식의 id 를 붙여서
+// 내보내므로, 재배치(rearrangeNotes)가 다시 파싱된 노드를 "어느 도형이었는지"로 정확히
+// 되짚어가려면 이 id 가 살아있어야 한다(괄호 안 라벨만 보고는 알 수 없다). id 가 없는
+// 줄(사람이 손으로 쓴, 아이디 없이 텍스트만 있는 마인드맵)은 null 을 돌려주고, 호출자
+// (parseMindmapBlock)가 그때만 합성 id를 만든다.
 function parseMindmapNodeToken(trimmed) {
   // id 부분도 영문/숫자로 제한하지 않는다(위 tokenizeFlowchartLine 의 readId 와 같은 이유) —
   // 공백과 도형 괄호만 피하면 한글 id 도 그대로 허용해서, "가지2{{육각형 잎}}" 같은 줄에서
   // id="가지2"/라벨="육각형 잎" 로 정확히 갈라지게 한다.
   const m = /^([^\s(){}[\]]+)?\s*(?:\(\(([^)]*)\)\)|\{\{([^}]*)\}\}|\[([^\]]*)\]|\(([^)]*)\))?$/.exec(trimmed);
-  if (!m) return { shape: "rect", label: unescapeMermaidBr(trimmed) };
+  if (!m) return { shape: "rect", label: unescapeMermaidBr(trimmed), id: null };
   const [, id, circle, hexagon, square, round] = m;
-  if (circle !== undefined) return { shape: "stadium", label: unescapeMermaidBr(circle.trim() || id || trimmed) };
-  if (hexagon !== undefined) return { shape: "hexagon", label: unescapeMermaidBr(hexagon.trim() || id || trimmed) };
-  if (square !== undefined) return { shape: "rect", label: unescapeMermaidBr(square.trim() || id || trimmed) };
-  if (round !== undefined) return { shape: "diamond", label: unescapeMermaidBr(round.trim() || id || trimmed) };
-  return { shape: "rect", label: unescapeMermaidBr((id || trimmed).trim()) };
+  if (circle !== undefined) return { shape: "stadium", label: unescapeMermaidBr(circle.trim() || id || trimmed), id: id || null };
+  if (hexagon !== undefined) return { shape: "hexagon", label: unescapeMermaidBr(hexagon.trim() || id || trimmed), id: id || null };
+  if (square !== undefined) return { shape: "rect", label: unescapeMermaidBr(square.trim() || id || trimmed), id: id || null };
+  if (round !== undefined) return { shape: "diamond", label: unescapeMermaidBr(round.trim() || id || trimmed), id: id || null };
+  // 괄호 없이 텍스트/id 하나뿐인 줄 — 그 자체가 라벨과 같은 값이라 별도 id 로는 안 쓴다.
+  return { shape: "rect", label: unescapeMermaidBr((id || trimmed).trim()), id: null };
 }
 
 // 마인드맵 블록 본문을 들여쓰기 기준 트리로 바꾼다. 들여쓰기 스택(indent, id)을 유지하면서,
@@ -4248,7 +4256,10 @@ function parseMindmapBlock(block) {
     if (!rawLine.trim()) return;
     const indent = rawLine.length - rawLine.trimStart().length;
     const info = parseMindmapNodeToken(rawLine.trim());
-    const id = `m${autoId++}`;
+    // 실제 id(N<note.id> 등)가 있으면 그대로 쓴다 — rearrangeNotes 가 재파싱된 노드를
+    // 원래 도형에 되짚어 연결하는 유일한 방법이다. 없을 때만(사람이 손으로 쓴 마인드맵)
+    // 합성 id 를 새로 만든다.
+    const id = info.id || `m${autoId++}`;
     nodes.set(id, info);
 
     while (stack.length > 0 && stack[stack.length - 1].indent >= indent) stack.pop();
@@ -4722,6 +4733,16 @@ function rearrangeNotes(targetNoteIds) {
       // w/h 는 절대 안 건드린다 — autoSize 도형은 이미 텍스트에 맞는 크기이고,
       // 수동 리사이즈한 도형의 크기는 그대로 존중돼야 하기 때문이다.
       const el = noteEl(note.id);
+      // 도형은 다시 파싱된 값으로 맞춰준다 — flowchart 는 6종 전부 문법이 1:1 왕복이라
+      // 이 대입이 항상 no-op(같은 값)이지만, 마인드맵은 대응 토큰이 없는 도형(입력/출력)
+      // 이 사각형으로 대체된 채 나갔다가 다시 그 모습으로 들어오므로, 여기서 실제
+      // note.shape 에도 반영해야 "내보내기 경고에서만 대체되고 화면은 그대로"인
+      // 상태가 안 생긴다(요청: 실제로 표시되는 도형에도 대체가 적용되게).
+      if (info.shape && info.shape !== note.shape) {
+        note.shape = info.shape;
+        if (el) el.dataset.shape = note.shape;
+        if (note.autoSize !== false) syncNoteHeightToText(note); // 도형이 바뀌면 인셋 비율도 달라지니 다시 맞춘다
+      }
       if (el) {
         el.style.left = `${note.x}px`;
         el.style.top = `${note.y}px`;
