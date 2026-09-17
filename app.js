@@ -1981,7 +1981,15 @@ function initResizeHandles() {
       const onUp = () => {
         document.removeEventListener("mousemove", onMove);
         document.removeEventListener("mouseup", onUp);
-        if (moved) commitChange();
+        if (moved) {
+          // 모서리를 직접 잡고 끌어서 크기를 바꿨다 — 이제부터는 텍스트 양에 따른
+          // 자동 크기 조정 대상에서 빠지고, 이 수동 크기가 계속 유지된다.
+          startNotes.forEach((sn) => {
+            const n = notes.find((nn) => nn.id === sn.id);
+            if (n) n.autoSize = false;
+          });
+          commitChange();
+        }
       };
 
       document.addEventListener("mousemove", onMove);
@@ -1992,14 +2000,17 @@ function initResizeHandles() {
 
 /* ===== 메모 ===== */
 
-/* ===== 텍스트 넘침에 맞춘 자동 높이 조정 =====
+/* ===== 텍스트 양에 비례하는 자동 높이 조정 =====
  * 화면에 붙이지 않는 오프스크린 프로브(.note/.note-text 와 완전히 같은 클래스를 입혀서
  * 만든 임시 요소)로 실제 렌더링을 그대로 재현해 측정한다 — 도형별 텍스트 인셋 비율
  * (원 15%, 마름모 25% 등, styles.css 참고)을 여기 따로 하드코딩하지 않기 위해서다.
- * scrollHeight(실제 필요한 내용 높이) 가 clientHeight(지금 도형 높이가 허용하는
- * 표시 높이) 를 넘으면, 그 비율(clientHeight/도형높이)을 거꾸로 적용해서 필요한
+ * scrollHeight(실제 필요한 내용 높이) 가 clientHeight(주어진 기준 높이가 허용하는
+ * 표시 높이) 를 넘으면, 그 비율(clientHeight/기준높이)을 거꾸로 적용해서 필요한
  * 도형 높이를 역산한다 — 스타일시트의 인셋 값이 나중에 바뀌어도 이 계산은 그대로
- * 맞는다(실측 비율을 쓰기 때문). 너비는 건드리지 않는다 — 항상 세로로만 키운다. */
+ * 맞는다(실측 비율을 쓰기 때문). 너비는 건드리지 않는다 — 항상 세로로만 계산한다.
+ * 도형 높이를 "넘칠 때만 키우는" 것(grow-only)이 아니라 "매번 텍스트 양에 맞춰
+ * 다시 계산"(양방향)하는 것은 이 함수를 어떤 기준 높이로 부르느냐에 달렸다 —
+ * syncNoteHeightToText 를 참고. */
 function measureNoteFitHeight(text, shape, diagramType, fontSize, textAlign, w, h) {
   const probe = document.createElement("div");
   probe.className = "note";
@@ -2038,12 +2049,20 @@ function measureNoteFitHeight(text, shape, diagramType, fontSize, textAlign, w, 
   return Math.max(h, neededH);
 }
 
-// 지금 텍스트가 도형 높이보다 커서 넘치면(그렇지 않으면 스크롤이 생기는 상태) 필요한
-// 만큼만 키운다. 절대 줄이지는 않는다 — 사용자가 일부러 키운 크기는 항상 그대로
-// 존중되고, "너무 작아서 잘리는" 경우에만 개입한다.
-function growNoteToFitTextIfOverflowing(note) {
-  const neededH = measureNoteFitHeight(note.text, note.shape, note.diagramType, note.fontSize, note.textAlign, note.w, note.h);
-  if (neededH <= note.h) return false;
+// note.autoSize 가 false 가 아닌 동안엔(기본값 — 사용자가 모서리를 잡고 수동으로
+// 리사이즈한 적이 없는 도형), 도형 높이를 "지금 텍스트 양에 정확히 비례하는 값"으로
+// 매번 다시 계산한다 — 늘어나면 커지고, 줄어들면 다시 작아진다(예전엔 커지기만 하고
+// 다시 안 줄어드는 문제가 있었는데, 이번에 "항상 다시 계산" 방식으로 바꿨다).
+// 기준 높이로 항상 DEFAULT_NOTE_H 를 주는 게 핵심 — 지금 도형의 현재 높이를 기준으로
+// 넘겼다면 "이미 커진 높이보다 작아지지 않기"가 되어버려 grow-only 로 되돌아간다.
+// measureNoteFitHeight 자체는 순수 측정 함수라 그 기준 높이보다 작게는 절대 안 돌려주므로,
+// 결과적으로 DEFAULT_NOTE_H(기존 기본 크기)가 자동 크기의 하한이 된다 — 문서/그룹 이름표처럼
+// 다른 작은 요소들과 달리, 메모는 아무리 텍스트가 짧아도 기존에 익숙한 기본 크기 밑으로는
+// 안 작아지는 편이 자연스럽다고 판단했다. 너비는 여기서 전혀 건드리지 않는다(세로만 자동).
+function syncNoteHeightToText(note) {
+  if (note.autoSize === false) return false;
+  const neededH = measureNoteFitHeight(note.text, note.shape, note.diagramType, note.fontSize, note.textAlign, note.w, DEFAULT_NOTE_H);
+  if (neededH === note.h) return false;
   note.h = neededH;
   const el = noteEl(note.id);
   if (el) el.style.height = `${neededH}px`;
@@ -2067,10 +2086,11 @@ function createNote(worldX, worldY, text = "", shape = nextShape, groupId = null
     textAlign: DEFAULT_TEXT_ALIGN,
     borderWidth: DEFAULT_BORDER_WIDTH,
     diagramType: nextDiagramType,
+    autoSize: true,
   };
   notes.push(note);
   const el = renderNote(note);
-  if (growNoteToFitTextIfOverflowing(note)) updateAllArrowGeometry();
+  if (syncNoteHeightToText(note)) updateAllArrowGeometry();
   if (groupId) {
     addNotesToGroup([note.id], groupId, true);
     renderGroups();
@@ -2889,7 +2909,7 @@ function renderNote(note) {
   });
   textEl.addEventListener("input", () => {
     note.text = textEl.textContent;
-    if (growNoteToFitTextIfOverflowing(note)) {
+    if (syncNoteHeightToText(note)) {
       updateHandles();
       updateAllArrowGeometry();
       updateGroupBoxGeometry();
@@ -4240,10 +4260,27 @@ function boundsOfPositions(positions, sizes) {
 
 const MERMAID_IMPORT_BLOCK_GAP = 100;
 const MERMAID_IMPORT_ROW_MAX_WIDTH = 1600;
+const MERMAID_IMPORT_EXISTING_GAP = 140; // 기존 캔버스 내용과 새로 가져온 내용 사이 간격
+
+// 현재 페이지에 이미 있는 모든 도형을 감싸는 경계 상자. 하나도 없으면 null —
+// 가져오기 배치가 "기존 내용이 아예 없을 때"와 "있을 때"를 구분하는 기준이 된다.
+function existingNotesBounds() {
+  if (notes.length === 0) return null;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  notes.forEach((n) => {
+    minX = Math.min(minX, n.x);
+    minY = Math.min(minY, n.y);
+    maxX = Math.max(maxX, n.x + n.w);
+    maxY = Math.max(maxY, n.y + n.h);
+  });
+  return { minX, minY, maxX, maxY };
+}
 
 // 블록마다 이미 계산된(dagre) 상대 좌표들을, 서로 겹치지 않도록 줄줄이 늘어놓은 뒤(왼쪽→
-// 오른쪽, 폭이 넘치면 다음 줄로) 전체 묶음의 중심이 지금 보이는 화면 한가운데에 오도록
-// 한 번에 옮긴다 — "화면 밖 저 멀리에 그려지지 않도록"(요구사항 5)의 구현.
+// 오른쪽, 폭이 넘치면 다음 줄로) 전체 묶음을 기존 캔버스 내용과 겹치지 않는 자리로
+// 한 번에 옮긴다. 화면에 실제로 보이게 하는 건(뷰를 그 자리로 옮기는 것) 이 함수의
+// 책임이 아니다 — 여긴 순수하게 월드 좌표만 계산하고, importMermaidText 가 다 만든
+// 뒤에 화면을 옮긴다(panToNewNotes).
 function placeBlocksOnCanvas(blocks, blockPositions, blockSizes) {
   let cursorX = 0;
   let cursorY = 0;
@@ -4268,8 +4305,8 @@ function placeBlocksOnCanvas(blocks, blockPositions, blockSizes) {
     rowHeight = Math.max(rowHeight, height);
   });
 
-  // 지금까지는 (0,0) 근처의 임의 좌표계 — 전체 묶음의 중심을 계산해서, 그 중심이 현재
-  // 화면 뷰포트의 중심(월드 좌표)에 오도록 마지막으로 한 번 더 평행이동한다.
+  // 지금까지는 (0,0) 근처의 임의 좌표계 — 전체 묶음의 경계 상자를 구해서, 기존 캔버스
+  // 내용과 안 겹치는 자리로 통째로 옮긴다(요구사항: 기존 도형/그룹과 뒤섞이지 않게).
   let overallMinX = Infinity, overallMinY = Infinity, overallMaxX = -Infinity, overallMaxY = -Infinity;
   blocks.forEach((block, idx) => {
     const bounds = boundsOfPositions(blockPositions[idx], blockSizes[idx]);
@@ -4280,15 +4317,24 @@ function placeBlocksOnCanvas(blocks, blockPositions, blockSizes) {
     overallMaxY = Math.max(overallMaxY, bounds.maxY + off.y);
   });
 
-  const canvasRect = canvas.getBoundingClientRect();
-  const viewportCenter = screenToWorld(
-    canvasRect.left + canvasRect.width / 2,
-    canvasRect.top + canvasRect.height / 2
-  );
-  const contentCenterX = (overallMinX + overallMaxX) / 2;
-  const contentCenterY = (overallMinY + overallMaxY) / 2;
-  const finalOffsetX = viewportCenter.x - contentCenterX;
-  const finalOffsetY = viewportCenter.y - contentCenterY;
+  // 기존 내용이 하나도 없으면 원점 근처(0,0)에 그대로 둔다 — importMermaidText 가
+  // 만든 뒤에 화면을 그 자리로 옮겨서 보여주므로 "화면 밖 멀리"가 되진 않는다.
+  const existing = existingNotesBounds();
+  let finalOffsetX = 0;
+  let finalOffsetY = 0;
+  if (existing) {
+    const existingW = existing.maxX - existing.minX;
+    const existingH = existing.maxY - existing.minY;
+    if (existingW >= existingH) {
+      // 가로로 넓게 퍼진 캔버스면 아래쪽 빈 곳에 붙인다.
+      finalOffsetX = existing.minX - overallMinX;
+      finalOffsetY = existing.maxY + MERMAID_IMPORT_EXISTING_GAP - overallMinY;
+    } else {
+      // 세로로 긴 캔버스면 오른쪽 빈 곳에 붙인다.
+      finalOffsetX = existing.maxX + MERMAID_IMPORT_EXISTING_GAP - overallMinX;
+      finalOffsetY = existing.minY - overallMinY;
+    }
+  }
 
   return blockOffsets.map((off) => ({ x: off.x + finalOffsetX, y: off.y + finalOffsetY }));
 }
@@ -4347,6 +4393,7 @@ function importMermaidText(text) {
         textAlign: DEFAULT_TEXT_ALIGN,
         borderWidth: DEFAULT_BORDER_WIDTH,
         diagramType: block.type,
+        autoSize: true,
       };
       newNotes.push(note);
       idMap.set(`${idx}:${mermaidId}`, note.id);
@@ -4366,12 +4413,27 @@ function importMermaidText(text) {
 
   blocks.forEach((block, idx) => {
     if (block.type === "flowchart") {
+      // 가져온 도형은 기존 캔버스 내용과 뒤섞이지 않도록 반드시 어떤 그룹엔가 속해야
+      // 한다 — subgraph 는 원래대로 각자 그룹이 되고, subgraph 밖의 낱개 도형들은
+      // (그룹 중첩을 지원하지 않는 이 앱의 구조상 subgraph 그룹 안으로 합칠 수 없으므로)
+      // 이 블록 하나를 대표하는 새 그룹으로 따로 묶는다 — 블록 안에 뭐가 있든 결과적으로
+      // 전부 어떤 그룹의 멤버가 된다.
+      const groupedIds = new Set();
       block.subgraphs.forEach((sg) => {
         const noteIds = sg.nodeIds.map((mid) => idMap.get(`${idx}:${mid}`)).filter((id) => id != null);
         if (noteIds.length === 0) return;
         const gid = localNextGroupId++;
         newGroups.push({ id: `g${gid}`, name: sg.name || `그룹 ${gid}`, noteIds, locked: false });
+        noteIds.forEach((id) => groupedIds.add(id));
       });
+
+      const looseIds = [...block.nodes.keys()]
+        .map((mid) => idMap.get(`${idx}:${mid}`))
+        .filter((id) => id != null && !groupedIds.has(id));
+      if (looseIds.length > 0) {
+        const gid = localNextGroupId++;
+        newGroups.push({ id: `g${gid}`, name: `가져온 도형 ${gid}`, noteIds: looseIds, locked: false });
+      }
     } else {
       const noteIds = [...block.nodes.keys()].map((mid) => idMap.get(`${idx}:${mid}`)).filter((id) => id != null);
       if (noteIds.length === 0) return;
@@ -4403,6 +4465,7 @@ function importMermaidText(text) {
   renderGroups();
   updateAllArrowGeometry();
   commitChange();
+  panToNewNotes(newNotes); // 기존 내용 옆/아래에 배치했을 수 있으니, 화면을 그 자리로 옮겨서 바로 보여준다
 
   return {
     ok: true,
@@ -4410,6 +4473,26 @@ function importMermaidText(text) {
     warnings,
     counts: { notes: newNotes.length, arrows: newArrows.length, groups: newGroups.length },
   };
+}
+
+// 방금 가져온 도형들의 경계 상자 중심이 화면 한가운데 오도록 뷰를 옮긴다(줌은 그대로,
+// panToNote 와 같은 방식) — 기존 캔버스 내용과 안 겹치는 자리에 배치하다 보니 지금
+// 보이는 화면 밖일 수 있어서, 만든 직후 그 쪽으로 화면을 옮겨줘야 사용자가 바로 본다.
+function panToNewNotes(newNotes) {
+  if (newNotes.length === 0) return;
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  newNotes.forEach((n) => {
+    minX = Math.min(minX, n.x);
+    minY = Math.min(minY, n.y);
+    maxX = Math.max(maxX, n.x + n.w);
+    maxY = Math.max(maxY, n.y + n.h);
+  });
+  const canvasRect = canvas.getBoundingClientRect();
+  const centerWorld = { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+  view.x = canvasRect.width / 2 - centerWorld.x * view.scale;
+  view.y = canvasRect.height / 2 - centerWorld.y * view.scale;
+  applyTransform();
+  save();
 }
 
 /* ----- Mermaid 가져오기 팝업 UI ----- */
