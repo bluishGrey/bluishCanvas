@@ -4453,13 +4453,13 @@ function computeBlockNodeSizes(block) {
   return sizes;
 }
 
-// flowchart: subgraph 를 dagre 의 "compound"(묶음) 노드로 등록해서, 묶인 도형들이
-// 레이아웃에서도 서로 가까이 모이게 한다. mindmap: 그룹 개념이 없는 평범한 트리라
-// compound 없이 그냥 부모→자식 엣지만 넣는다. 두 경우 다 결과는 같은 모양
-// (mermaidId -> {x, y}, dagre 기준 노드 "중심" 좌표)으로 돌려준다.
+// flowchart 전용(계층형). subgraph 를 dagre 의 "compound"(묶음) 노드로 등록해서, 묶인
+// 도형들이 레이아웃에서도 서로 가까이 모이게 한다. 결과는 (mermaidId -> {x, y}, dagre
+// 기준 노드 "중심" 좌표)로 돌려준다 — mindmap 은 더 이상 이 함수를 쓰지 않는다
+// (layoutMindmapRadial 참고, 아래 layoutBlock 이 타입에 따라 갈라 부른다).
 function layoutBlockWithDagre(block, sizes) {
   const g = new dagre.graphlib.Graph({ compound: true });
-  const rankdir = block.type === "flowchart" ? toDagreRankDir(block.direction) : "LR";
+  const rankdir = toDagreRankDir(block.direction);
   g.setGraph({ rankdir, nodesep: MERMAID_IMPORT_NODESEP, ranksep: MERMAID_IMPORT_RANKSEP, marginx: 20, marginy: 20 });
   g.setDefaultEdgeLabel(() => ({}));
 
@@ -4472,15 +4472,13 @@ function layoutBlockWithDagre(block, sizes) {
     g.setEdge(e.from, e.to);
   });
 
-  if (block.type === "flowchart") {
-    block.subgraphs.forEach((sg, idx) => {
-      const clusterId = `__cluster${idx}`;
-      g.setNode(clusterId, {});
-      sg.nodeIds.forEach((id) => {
-        if (block.nodes.has(id)) g.setParent(id, clusterId);
-      });
+  block.subgraphs.forEach((sg, idx) => {
+    const clusterId = `__cluster${idx}`;
+    g.setNode(clusterId, {});
+    sg.nodeIds.forEach((id) => {
+      if (block.nodes.has(id)) g.setParent(id, clusterId);
     });
-  }
+  });
 
   dagre.layout(g);
 
@@ -4490,6 +4488,61 @@ function layoutBlockWithDagre(block, sizes) {
     positions.set(id, { x: n.x, y: n.y });
   });
   return positions;
+}
+
+/* ===== mindmap 전용: 방사형(radial) 레이아웃 =====
+ * 실제 Mermaid 공식 렌더러는 mindmap 에 dagre(계층형)를 안 쓰고 별도의 방사형 엔진을
+ * 쓴다 — 루트를 중심에 놓고, 자식들을 중심 둘레에 균등한 각도로, 손자는 그 자식을
+ * 중심으로 한 바깥 원에 놓는 식. d3-hierarchy(CDN, window.d3) 의 d3.tree() 를 각도·
+ * 반지름 좌표계로 쓰면 이 방사형 배치를 그대로 얻는다 — 각 형제 사이의 각도 간격을
+ * 안 겹치게 계산해주는 부분까지 라이브러리가 대신해준다(직접 각도 나누기 계산을
+ * 새로 짜지 않는다). */
+
+const MINDMAP_RADIAL_RING_MARGIN = 60; // 반지름 방향으로 링(깊이) 사이에 추가로 두는 여백
+
+// { id, children } 형태의 중첩 객체로 바꾼다 — d3.hierarchy() 가 기대하는 입력 모양.
+function buildMindmapTreeNode(id, childrenOf) {
+  return { id, children: (childrenOf.get(id) || []).map((childId) => buildMindmapTreeNode(childId, childrenOf)) };
+}
+
+function layoutMindmapRadial(block, sizes) {
+  const childrenOf = new Map();
+  block.nodes.forEach((info, id) => childrenOf.set(id, []));
+  block.edges.forEach((e) => {
+    if (childrenOf.has(e.from) && block.nodes.has(e.to)) childrenOf.get(e.from).push(e.to);
+  });
+
+  const root = d3.hierarchy(buildMindmapTreeNode(block.root, childrenOf));
+
+  // 링(깊이) 사이 간격 — 그 블록에서 가장 큰 도형(자동 높이조정으로 세로가 길어진
+  // 경우 포함)을 기준으로 잡아서, 어떤 깊이에서도 안쪽/바깥쪽 링 도형끼리 안 겹치게 한다.
+  let maxBoxDim = Math.max(DEFAULT_NOTE_W, DEFAULT_NOTE_H);
+  sizes.forEach((s) => { maxBoxDim = Math.max(maxBoxDim, s.w, s.h); });
+  const ringGap = maxBoxDim + MINDMAP_RADIAL_RING_MARGIN;
+  const maxRadius = Math.max(1, root.height) * ringGap;
+
+  const treeLayout = d3
+    .tree()
+    .size([2 * Math.PI, maxRadius])
+    // d3 공식 방사형 트리 예제의 관용적인 분리 함수 — 깊이로 나눠주는 것이 바깥 링일수록
+    // 둘레가 길어지는 만큼 상대 간격을 좁혀도(반지름×각도=호 길이는 유지되게) 되는 것과
+    // 맞아떨어진다. 형제끼리는 1, 사촌끼리는 그보다 넓게(2) 띄운다.
+    .separation((a, b) => (a.parent === b.parent ? 1 : 2) / Math.max(a.depth, 1));
+  treeLayout(root);
+
+  const positions = new Map();
+  root.each((node) => {
+    const angle = node.x - Math.PI / 2; // 0라디안이 12시 방향이 되도록(보기 좋은 기준)
+    const r = node.y;
+    positions.set(node.data.id, { x: r * Math.cos(angle), y: r * Math.sin(angle) });
+  });
+  return positions;
+}
+
+// flowchart 는 dagre(계층형), mindmap 은 방사형 — 블록 타입에 따라 알맞은 레이아웃
+// 엔진으로 갈라 부른다. 가져오기/재배치 둘 다 이 함수 하나를 거친다.
+function layoutBlock(block, sizes) {
+  return block.type === "mindmap" ? layoutMindmapRadial(block, sizes) : layoutBlockWithDagre(block, sizes);
 }
 
 // 블록 하나의 노드 좌표들로부터 그 블록이 차지하는 월드 경계 상자를 구한다. 노드마다
@@ -4630,7 +4683,7 @@ function importMermaidText(text) {
   });
 
   const blockSizes = blocks.map(computeBlockNodeSizes);
-  const blockPositions = blocks.map((block, idx) => layoutBlockWithDagre(block, blockSizes[idx]));
+  const blockPositions = blocks.map((block, idx) => layoutBlock(block, blockSizes[idx]));
   const blockOffsets = placeBlocksOnCanvas(blocks, blockPositions, blockSizes);
 
   let localNextId = nextId;
@@ -4824,7 +4877,7 @@ function rearrangeNotes(targetNoteIds) {
   const anchorCenter = { x: (ax0 + ax1) / 2, y: (ay0 + ay1) / 2 };
 
   const blockSizes = blocks.map(computeBlockNodeSizes);
-  const blockPositions = blocks.map((block, idx) => layoutBlockWithDagre(block, blockSizes[idx]));
+  const blockPositions = blocks.map((block, idx) => layoutBlock(block, blockSizes[idx]));
   const blockOffsets = placeBlocksAtCenter(blocks, blockPositions, blockSizes, anchorCenter.x, anchorCenter.y);
 
   // Export 과정에서 빠진 도형(타입 미지정, 그룹 없는 마인드맵 도형 등)은 재배치
