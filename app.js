@@ -4505,15 +4505,18 @@ function layoutBlockWithDagre(block, sizes) {
 /* ===== mindmap 전용: 방사형(radial) 레이아웃 =====
  * 실제 Mermaid 공식 렌더러는 mindmap 에 dagre(계층형)를 안 쓰고 별도의 방사형 엔진을
  * 쓴다 — 루트를 중심에 놓고, 자식들을 중심 둘레에 균등한 각도로, 손자는 그 자식을
- * 중심으로 한 바깥 원에 놓는 식. d3-hierarchy(CDN, window.d3) 의 d3.tree() 를 각도·
- * 반지름 좌표계로 쓰면 이 방사형 배치를 그대로 얻는다 — 각 형제 사이의 각도 간격을
- * 안 겹치게 계산해주는 부분까지 라이브러리가 대신해준다(직접 각도 나누기 계산을
- * 새로 짜지 않는다).
+ * 중심으로 한 바깥 원에 놓는 식.
  *
- * 반지름(깊이별)은 항상 정확히 균일하다 — 아래 최종 배치 루프가 d3 의 y 값을 쓰지
- * 않고 항상 `전역 depth * ringGap` 으로 직접 계산하기 때문에, 어느 가지에 속하든
- * 깊이가 같으면 중심으로부터 거리가 소수점까지 완전히 같다. d3.tree() 는 오직
- * "같은 부모 밑 형제끼리 안 겹치는 각도"를 구하는 데만 쓴다.
+ * 반지름은 "최상위 중심으로부터의 거리"가 아니라 "직속 부모로부터의 거리"로 재귀적으로
+ * 계산한다 — 각 노드의 위치 = 부모 위치 + edgeLength * (자기 각도 방향). 이러면 부모→
+ * 자식 화살표 길이가 트리 어디서든 항상 정확히 edgeLength 로 균일해진다(예전엔 "최상위
+ * 중심으로부터 depth*ringGap" 이었어서, 같은 깊이의 반지름은 균일했지만 부모-자식
+ * 거리는 형제 각도 퍼짐 정도에 따라 노드마다 달랐다). d3-hierarchy 에는 이런
+ * "부모 기준 고정 간선 길이" 방사형 모드가 없어서(d3.tree()/d3.cluster()/d3.partition()
+ * 모두 "깊이의 함수로 정해지는, 원점 기준 반지름"만 지원 — 확인 후 결론) 이 부분은
+ * d3 없이 직접 재귀로 계산한다. 각도 배정(어느 방향으로 갈지)은 여전히 d3.tree() 를
+ * 쓴다 — 이건 "같은 부모 밑 형제끼리 안 겹치는 각도"를 구하는 문제라 이 라이브러리가
+ * 여전히 적합하다.
  *
  * 가지(1단계 자식)별 "부채꼴 각도 제한": 자식이 많은 가지가 자유롭게 넓은 각도를
  * 다 차지하면(원래 d3.tree() 기본 동작 — 전체 자손 수에 비례해 몫을 나눔) 가지끼리
@@ -4527,14 +4530,14 @@ function layoutBlockWithDagre(block, sizes) {
  *
  * 부채꼴 폭을 좁게 강제하면 부작용으로, 한 부모 밑에 형제가 아주 많은 경우(예: 한
  * 가지에 자식 10개) 그 좁은 폭 안에 다 욱여넣다 보니 형제끼리 각도 간격이 너무
- * 촘촘해져 실제로 겹칠 수 있다(반지름은 고정인데 각도 여유가 없어지므로). 그래서
- * 링 간격(ringGap)을 "박스 크기 기준 기본값"과 "이 트리에서 형제가 가장 촘촘하게
- * 몰린 지점이 실제로 안 겹치려면 필요한 값" 중 더 큰 쪽으로 정한다 — 즉 어떤 깊이의
- * 반지름이든 depth*ringGap 이라는 같은 공식은 그대로 유지하면서(깊이별 반지름 균일성은
- * 안 깨짐), 필요할 때만 ringGap 자체를 전체적으로 키워 모든 형제 그룹이 실제로
- * 안전한 호(arc) 간격을 갖게 한다. */
+ * 촘촘해져 실제로 겹칠 수 있다. 그래서 간선 길이(edgeLength)를 "박스 크기 기준
+ * 기본값"과 "이 트리에서 형제가 가장 촘촘하게 몰린 지점이 실제로 안 겹치려면
+ * 필요한 값" 중 더 큰 쪽으로 정한다 — 부모 기준 재귀 모델에서는 한 부모의 모든
+ * 자식이 정확히 반지름 edgeLength 인 원 위에 있으므로(부모가 어디에 있든), 그 원에서
+ * 형제 사이 호(arc) 길이가 항상 안전한 최소값 이상이 되도록 edgeLength 하나를
+ * 전역적으로 정하면 트리 전체에서 형제끼리 안 겹치는 게 보장된다. */
 
-const MINDMAP_RADIAL_RING_MARGIN = 60; // 반지름 방향으로 링(깊이) 사이에 추가로 두는 여백
+const MINDMAP_RADIAL_EDGE_MARGIN = 60; // 부모-자식 간선 길이(edgeLength)에 도형 크기 위에 추가로 두는 여백
 const MINDMAP_BRANCH_SECTOR_MARGIN = 1.15; // 가지별 부채꼴 반폭에 곱하는 여유 배수(15%)
 
 // { id, children } 형태의 중첩 객체로 바꾼다 — d3.hierarchy() 가 기대하는 입력 모양.
@@ -4553,12 +4556,12 @@ function layoutMindmapRadial(block, sizes) {
 
   const root = d3.hierarchy(buildMindmapTreeNode(block.root, childrenOf));
 
-  // 링(깊이) 사이 간격의 기본값 — 그 블록에서 가장 큰 도형(자동 높이조정으로 세로가
+  // 부모-자식 간선 길이의 기본값 — 그 블록에서 가장 큰 도형(자동 높이조정으로 세로가
   // 길어진 경우 포함)을 기준으로 잡는다. 부채꼴 폭 제약 때문에 이걸로 부족하면
   // 아래에서 더 키운다.
   let maxBoxDim = Math.max(DEFAULT_NOTE_W, DEFAULT_NOTE_H);
   sizes.forEach((s) => { maxBoxDim = Math.max(maxBoxDim, s.w, s.h); });
-  const baseRingGap = maxBoxDim + MINDMAP_RADIAL_RING_MARGIN;
+  const baseEdgeLength = maxBoxDim + MINDMAP_RADIAL_EDGE_MARGIN;
 
   // 루트 기준 "원시" 각도(라디안, 0=오른쪽 기준) — 마지막에 한꺼번에 -90°(위쪽 기준)로 돌린다.
   const rawAngleOf = new Map();
@@ -4587,27 +4590,35 @@ function layoutMindmapRadial(block, sizes) {
   }
 
   // 부채꼴로 좁혀진 각도 때문에 형제끼리 너무 촘촘해진 곳이 있는지 확인해서, 필요하면
-  // ringGap 을 키운다 — "부모 하나당 자식들 각도를 정렬해서 인접한 형제끼리의 최소
-  // 각도 간격"을 모든 부모에 대해 구하고, 그 간격×해당 깊이의 반지름이 baseRingGap
-  // (도형이 안 겹치는 최소 간격으로 이미 검증된 값)보다 작아지지 않게 역산한다.
-  let ringGap = baseRingGap;
+  // edgeLength 를 키운다 — 부모 기준 재귀 모델에서는 어느 부모든 그 자식들이 정확히
+  // 반지름 edgeLength 인 원 위에 있으므로, "부모 하나당 자식들 사이 최소 각도 간격"×
+  // edgeLength(호 길이)가 baseEdgeLength(도형이 안 겹치는 최소 간격) 이상이 되도록
+  // 모든 부모에 대해 역산해서 가장 큰 값을 쓴다.
+  let edgeLength = baseEdgeLength;
   root.each((node) => {
     const kids = node.children;
     if (!kids || kids.length < 2) return;
-    const childDepth = node.depth + 1;
     const angles = kids.map((k) => rawAngleOf.get(k.data.id)).sort((a, b) => a - b);
     let minGap = Infinity;
     for (let i = 1; i < angles.length; i++) minGap = Math.min(minGap, angles[i] - angles[i - 1]);
     if (!(minGap > 0)) return; // 각도가 완전히 같은 경우(자식 1개 등) 방지
-    const neededRingGap = baseRingGap / (childDepth * minGap);
-    ringGap = Math.max(ringGap, neededRingGap);
+    const neededEdgeLength = baseEdgeLength / minGap;
+    edgeLength = Math.max(edgeLength, neededEdgeLength);
   });
 
+  // 직속 부모 기준 재귀 배치: 각 노드 = 부모 위치 + edgeLength * (자기 각도 방향).
+  // root.each() 는 항상 얕은 깊이부터(부모가 자식보다 먼저) 순회하므로, 이 한 번의
+  // 순회 안에서 자식을 계산할 때 부모 위치가 이미 채워져 있는 게 보장된다.
   const positions = new Map();
+  positions.set(root.data.id, { x: 0, y: 0 });
   root.each((node) => {
+    if (node.depth === 0) return; // 루트는 이미 원점에 있다
+    const parentPos = positions.get(node.parent.data.id);
     const angle = rawAngleOf.get(node.data.id) - Math.PI / 2; // 0라디안이 12시 방향이 되도록
-    const r = node.depth * ringGap; // 전역 depth 기준 — 가지와 무관하게 같은 깊이는 항상 같은 반지름
-    positions.set(node.data.id, { x: r * Math.cos(angle), y: r * Math.sin(angle) });
+    positions.set(node.data.id, {
+      x: parentPos.x + edgeLength * Math.cos(angle),
+      y: parentPos.y + edgeLength * Math.sin(angle),
+    });
   });
   return positions;
 }
