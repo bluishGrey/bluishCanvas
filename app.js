@@ -14,6 +14,7 @@ const world = document.getElementById("world");
 const selectionBoxEl = document.getElementById("selection-box");
 const selectionOutlineEl = document.getElementById("selection-outline");
 const resizeHandlesEl = document.getElementById("resize-handles");
+const selectionRemoveFromGroupBtn = document.getElementById("selection-remove-from-group-btn");
 const quickMenuEl = document.getElementById("quick-menu");
 const zoomLabel = document.getElementById("zoom-label");
 const resetBtn = document.getElementById("reset-view");
@@ -54,6 +55,7 @@ const mermaidImportCloseBtn = document.getElementById("mermaid-import-close-btn"
 const mermaidImportTextEl = document.getElementById("mermaid-import-text");
 const mermaidImportWarningsEl = document.getElementById("mermaid-import-warnings");
 const mermaidImportRunBtn = document.getElementById("mermaid-import-run-btn");
+const rearrangeBtn = document.getElementById("rearrange-btn");
 const groupContextMenuEl = document.getElementById("group-context-menu");
 const noteContextMenuEl = document.getElementById("note-context-menu");
 const quickMenuGroupHintEl = document.getElementById("quick-menu-group-hint");
@@ -950,34 +952,22 @@ sidebarSearchInput.addEventListener("input", () => {
 
 /* ===== 사이드바: 꾸미기 패널 ===== */
 
-document.querySelectorAll(".style-swatch").forEach((btn) => {
+// 꾸미기 패널엔 이제 다이어그램 타입 하나만 남아 있다(배경색/텍스트크기/정렬/테두리굵기는
+// Mermaid 변환에 전혀 반영되지 않아서 패널에서 제거했다 — note.bg 등 데이터 필드와
+// applyNoteStyleToEl 렌더링 자체는 그대로 남아있으므로 예전에 꾸며둔 메모는 그대로 보인다).
+document.querySelectorAll('#style-panel-body [data-style-field="diagramType"] button').forEach((btn) => {
   btn.addEventListener("click", () => {
-    // 흰색은 "기본값(null)"으로 저장한다 — 굳이 커스텀 배경 데이터를 남기지 않아도
-    // 어차피 기본 배경색과 시각적으로 같기 때문.
-    const color = btn.dataset.color === "#ffffff" ? null : btn.dataset.color;
-    applyStyleToSelection("bg", color);
-  });
-});
-
-document.querySelectorAll("#style-panel-body [data-style-field]").forEach((row) => {
-  const field = row.dataset.styleField;
-  row.querySelectorAll("button").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const raw = btn.dataset.value;
-      let value;
-      if (field === "textAlign") {
-        value = raw;
-      } else if (field === "diagramType") {
-        value = raw === "none" ? null : raw; // "미지정"은 null 로 저장한다
-      } else {
-        value = Number(raw);
-      }
-      applyStyleToSelection(field, value);
-    });
+    const value = btn.dataset.value === "none" ? null : btn.dataset.value; // "미지정"은 null 로 저장한다
+    applyStyleToSelection("diagramType", value);
   });
 });
 
 removeFromGroupBtn.addEventListener("click", removeSelectedNotesFromGroups);
+selectionRemoveFromGroupBtn.addEventListener("mousedown", (e) => e.stopPropagation());
+selectionRemoveFromGroupBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  removeSelectedNotesFromGroups();
+});
 
 /* ===== 사이드바 접기 / 펼치기 ===== */
 
@@ -1806,6 +1796,7 @@ function updateHandles() {
   if (selectedIds.size === 0) {
     resizeHandlesEl.hidden = true;
     selectionOutlineEl.hidden = true;
+    selectionRemoveFromGroupBtn.hidden = true;
     return;
   }
 
@@ -1828,6 +1819,7 @@ function updateHandles() {
   if (!isFinite(left)) {
     resizeHandlesEl.hidden = true;
     selectionOutlineEl.hidden = true;
+    selectionRemoveFromGroupBtn.hidden = true;
     return;
   }
 
@@ -1858,6 +1850,23 @@ function updateHandles() {
   });
 
   resizeHandlesEl.hidden = false;
+
+  // 다중 선택(2개 이상)이고, 그중 (잠기지 않은) 그룹에 속한 도형이 하나라도 있을 때만
+  // 보여준다 — 꾸미기 패널의 "그룹에서 빼기" 버튼과 같은 조건, 다중 선택 상황에서
+  // 캔버스 위에서 바로 쓸 수 있게 하는 빠른 진입점일 뿐 새 판정 로직은 아니다.
+  const canRemoveFromGroup =
+    selectedIds.size > 1 &&
+    Array.from(selectedIds).some((id) => {
+      const group = groupOfNote(id);
+      return group && !group.locked;
+    });
+  if (canRemoveFromGroup) {
+    selectionRemoveFromGroupBtn.style.left = `${r}px`;
+    selectionRemoveFromGroupBtn.style.top = `${t - 14}px`;
+    selectionRemoveFromGroupBtn.hidden = false;
+  } else {
+    selectionRemoveFromGroupBtn.hidden = true;
+  }
 }
 
 // corner 를 쥐고 끌 때, 이 메모에서 "움직이지 않고 고정되는" 반대쪽 모서리의 월드 좌표.
@@ -2490,6 +2499,10 @@ function updateNoteGroupUI() {
     if (group) el.title = `그룹: ${group.name}`;
     else el.removeAttribute("title");
 
+    // 그룹 소속 여부를 CSS 에서 바로 판정할 수 있게 속성으로 얹어둔다 — 그룹에
+    // 안 속한 도형은 점선+경고색 테두리로 눈에 띄게 표시한다(styles.css 참고).
+    el.dataset.grouped = group ? "true" : "false";
+
     const btn = el.querySelector(".note-ungroup-btn");
     if (!btn) return;
     btn.hidden = !group;
@@ -2646,8 +2659,9 @@ function removeNoteFromGroupAction(noteId) {
   commitChange();
 }
 
-// 꾸미기 패널의 "그룹에서 빼기" — 지금 선택된 것들 중 (잠기지 않은) 그룹에 속한
-// 것만 전부 뺀다. 선택된 것 중 그룹에 안 속한 도형이나 잠긴 그룹 소속은 그냥 둔다.
+// 꾸미기 패널/다중 선택 경계 상자 버튼 공용 "그룹에서 빼기" — 지금 선택된 것들 중
+// (잠기지 않은) 그룹에 속한 것만 전부 뺀다. 선택된 것 중 그룹에 안 속한 도형이나
+// 잠긴 그룹 소속은 그냥 둔다.
 function removeSelectedNotesFromGroups() {
   let removedAny = false;
   selectedIds.forEach((id) => {
@@ -2659,6 +2673,7 @@ function removeSelectedNotesFromGroups() {
   if (!removedAny) return;
   renderGroups();
   updateStylePanel();
+  updateHandles(); // 경계 상자 버튼도 다시 판정(더 뺄 게 없으면 숨김)
   commitChange();
 }
 
@@ -2854,13 +2869,6 @@ function updateStylePanel() {
 
   // 다중 선택 시에도 표시는 "맨 처음 선택된 메모" 기준 하나만 보여준다(실제 적용은
   // 항상 선택된 전체에 동일하게 이루어진다 — 이 강조 표시는 참고용일 뿐).
-  document.querySelectorAll(".style-swatch").forEach((btn) => {
-    // 흰색(#ffffff) 프리셋은 bg:null(커스텀 배경 없음)과 시각적으로 같으므로 같은 것으로 취급한다.
-    btn.classList.toggle("active", (first.bg || "#ffffff") === btn.dataset.color);
-  });
-  setStyleButtonRowActive("fontSize", first.fontSize ?? DEFAULT_FONT_SIZE);
-  setStyleButtonRowActive("textAlign", first.textAlign || DEFAULT_TEXT_ALIGN);
-  setStyleButtonRowActive("borderWidth", first.borderWidth ?? DEFAULT_BORDER_WIDTH);
   // 미지정(null)은 버튼의 data-value="none" 과 짝지어 표시한다.
   setStyleButtonRowActive("diagramType", first.diagramType || "none");
 
@@ -4276,12 +4284,13 @@ function existingNotesBounds() {
   return { minX, minY, maxX, maxY };
 }
 
-// 블록마다 이미 계산된(dagre) 상대 좌표들을, 서로 겹치지 않도록 줄줄이 늘어놓은 뒤(왼쪽→
-// 오른쪽, 폭이 넘치면 다음 줄로) 전체 묶음을 기존 캔버스 내용과 겹치지 않는 자리로
-// 한 번에 옮긴다. 화면에 실제로 보이게 하는 건(뷰를 그 자리로 옮기는 것) 이 함수의
-// 책임이 아니다 — 여긴 순수하게 월드 좌표만 계산하고, importMermaidText 가 다 만든
-// 뒤에 화면을 옮긴다(panToNewNotes).
-function placeBlocksOnCanvas(blocks, blockPositions, blockSizes) {
+// 블록마다 이미 계산된(dagre) 상대 좌표들을, 서로 겹치지 않도록 줄줄이 늘어놓는다(왼쪽→
+// 오른쪽, 폭이 넘치면 다음 줄로) — "최종적으로 어디에 놓을지"는 이 함수의 책임이 아니다.
+// 호출자가 blockOffsets(블록별 상대 오프셋)와 overallBounds(전체 묶음의 (0,0) 기준
+// 경계 상자)를 받아서 마지막 한 번의 평행이동만 더 하면 된다 — placeBlocksOnCanvas
+// (기존 도형과 안 겹치는 자리)와 placeBlocksAtCenter(재배치: 특정 중심점에 맞추기)가
+// 이 패킹 로직 하나를 공유한다.
+function packBlocksLocally(blocks, blockPositions, blockSizes) {
   let cursorX = 0;
   let cursorY = 0;
   let rowHeight = 0;
@@ -4305,8 +4314,6 @@ function placeBlocksOnCanvas(blocks, blockPositions, blockSizes) {
     rowHeight = Math.max(rowHeight, height);
   });
 
-  // 지금까지는 (0,0) 근처의 임의 좌표계 — 전체 묶음의 경계 상자를 구해서, 기존 캔버스
-  // 내용과 안 겹치는 자리로 통째로 옮긴다(요구사항: 기존 도형/그룹과 뒤섞이지 않게).
   let overallMinX = Infinity, overallMinY = Infinity, overallMaxX = -Infinity, overallMaxY = -Infinity;
   blocks.forEach((block, idx) => {
     const bounds = boundsOfPositions(blockPositions[idx], blockSizes[idx]);
@@ -4316,6 +4323,15 @@ function placeBlocksOnCanvas(blocks, blockPositions, blockSizes) {
     overallMaxX = Math.max(overallMaxX, bounds.maxX + off.x);
     overallMaxY = Math.max(overallMaxY, bounds.maxY + off.y);
   });
+
+  return { blockOffsets, overallBounds: { minX: overallMinX, minY: overallMinY, maxX: overallMaxX, maxY: overallMaxY } };
+}
+
+// (Mermaid 붙여넣기 가져오기용) 패킹한 전체 묶음을, 기존 캔버스 내용과 겹치지 않는
+// 자리로 한 번에 옮긴다. 화면에 실제로 보이게 하는 건(뷰를 그 자리로 옮기는 것) 이
+// 함수의 책임이 아니다 — importMermaidText 가 다 만든 뒤에 화면을 옮긴다(panToNewNotes).
+function placeBlocksOnCanvas(blocks, blockPositions, blockSizes) {
+  const { blockOffsets, overallBounds } = packBlocksLocally(blocks, blockPositions, blockSizes);
 
   // 기존 내용이 하나도 없으면 원점 근처(0,0)에 그대로 둔다 — importMermaidText 가
   // 만든 뒤에 화면을 그 자리로 옮겨서 보여주므로 "화면 밖 멀리"가 되진 않는다.
@@ -4327,16 +4343,28 @@ function placeBlocksOnCanvas(blocks, blockPositions, blockSizes) {
     const existingH = existing.maxY - existing.minY;
     if (existingW >= existingH) {
       // 가로로 넓게 퍼진 캔버스면 아래쪽 빈 곳에 붙인다.
-      finalOffsetX = existing.minX - overallMinX;
-      finalOffsetY = existing.maxY + MERMAID_IMPORT_EXISTING_GAP - overallMinY;
+      finalOffsetX = existing.minX - overallBounds.minX;
+      finalOffsetY = existing.maxY + MERMAID_IMPORT_EXISTING_GAP - overallBounds.minY;
     } else {
       // 세로로 긴 캔버스면 오른쪽 빈 곳에 붙인다.
-      finalOffsetX = existing.maxX + MERMAID_IMPORT_EXISTING_GAP - overallMinX;
-      finalOffsetY = existing.minY - overallMinY;
+      finalOffsetX = existing.maxX + MERMAID_IMPORT_EXISTING_GAP - overallBounds.minX;
+      finalOffsetY = existing.minY - overallBounds.minY;
     }
   }
 
   return blockOffsets.map((off) => ({ x: off.x + finalOffsetX, y: off.y + finalOffsetY }));
+}
+
+// (재배치용) 패킹한 전체 묶음의 중심이 주어진 월드 좌표(centerX, centerY)에 오도록
+// 옮긴다 — "정리는 되지만 캔버스 안에서 갑자기 멀리 옮겨가진 않도록", 재배치 전 그
+// 범위가 있던 자리의 중심을 그대로 다시 중심으로 쓴다(rearrangeNotes 참고).
+function placeBlocksAtCenter(blocks, blockPositions, blockSizes, centerX, centerY) {
+  const { blockOffsets, overallBounds } = packBlocksLocally(blocks, blockPositions, blockSizes);
+  const contentCenterX = (overallBounds.minX + overallBounds.maxX) / 2;
+  const contentCenterY = (overallBounds.minY + overallBounds.maxY) / 2;
+  const dx = centerX - contentCenterX;
+  const dy = centerY - contentCenterY;
+  return blockOffsets.map((off) => ({ x: off.x + dx, y: off.y + dy }));
 }
 
 /* ----- 파싱+배치 결과를 실제 캔버스 상태로 반영 ----- */
@@ -4494,6 +4522,131 @@ function panToNewNotes(newNotes) {
   applyTransform();
   save();
 }
+
+/* ===== 재배치: 캔버스/선택 범위를 Mermaid 배치 규칙대로 다시 정렬 =====
+ * "내보냈다가 곧바로 다시 가져오기"와 원리가 같지만, 도형을 지우고 새로 만드는 대신
+ * (그러면 배경색/자동크기 상태 같은 Mermaid 에 안 담기는 정보를 잃는다) 다시 계산된
+ * 좌표를 원래 그 도형의 x,y 에만 덮어쓴다 — 그래서 재배치는 순수하게 위치만 바꾼다.
+ * generateMermaid() 는 전역 notes/arrows/groups 를 읽는 순수 함수라, 범위만 담은
+ * Export 결과를 얻으려고 계산하는 동안만 전역을 그 범위로 잠깐 바꿔치기한다(동기
+ * 함수라 그 사이에 다른 코드가 끼어들 일이 없어 안전하다). */
+
+// 지금 선택된 도형(들)을 감싸는 그룹까지 포함해서 재배치 대상 id 목록을 만든다.
+// 선택이 없으면 페이지 전체. "선택 범위(같은 그룹 내 도형들)만 재배치"라는 요구사항
+// 그대로 — 그룹의 일부만 골라 선택해도 그 그룹 전체가 같이 움직인다(diagramType
+// 변경이 그룹 전체로 확장되는 것과 같은 원리).
+function rearrangeTargetNoteIds() {
+  if (selectedIds.size === 0) return notes.map((n) => n.id);
+  const ids = new Set(selectedIds);
+  selectedIds.forEach((id) => {
+    const group = groupOfNote(id);
+    if (group) group.noteIds.forEach((memberId) => ids.add(memberId));
+  });
+  return [...ids];
+}
+
+function rearrangeNotes(targetNoteIds) {
+  const targetSet = new Set(targetNoteIds);
+  const scopedNotes = notes.filter((n) => targetSet.has(n.id));
+  if (scopedNotes.length === 0) {
+    return { ok: false, warnings: ["재배치할 도형이 없습니다."] };
+  }
+  const scopedArrows = arrows.filter((a) => targetSet.has(a.fromId) && targetSet.has(a.toId));
+  const scopedGroups = groups.filter((g) => g.noteIds.some((id) => targetSet.has(id)));
+
+  const realNotes = notes;
+  const realArrows = arrows;
+  const realGroups = groups;
+  let mermaid;
+  try {
+    notes = scopedNotes;
+    arrows = scopedArrows;
+    groups = scopedGroups;
+    mermaid = generateMermaid();
+  } finally {
+    notes = realNotes;
+    arrows = realArrows;
+    groups = realGroups;
+  }
+
+  const combinedText = mermaid.blocks.map((b) => b.text).join("\n\n");
+  const { blocks, errors } = parseMermaidImportText(combinedText);
+  const warnings = [...mermaid.warnings, ...errors];
+  if (blocks.length === 0) {
+    return { ok: false, warnings };
+  }
+
+  // 재배치 전 이 범위가 있던 자리의 중심(월드 좌표) — 정리는 하되 캔버스 안에서
+  // 갑자기 멀리 옮겨가진 않도록, 새 레이아웃도 그 언저리를 중심으로 잡는다.
+  let ax0 = Infinity, ay0 = Infinity, ax1 = -Infinity, ay1 = -Infinity;
+  scopedNotes.forEach((n) => {
+    ax0 = Math.min(ax0, n.x);
+    ay0 = Math.min(ay0, n.y);
+    ax1 = Math.max(ax1, n.x + n.w);
+    ay1 = Math.max(ay1, n.y + n.h);
+  });
+  const anchorCenter = { x: (ax0 + ax1) / 2, y: (ay0 + ay1) / 2 };
+
+  const blockSizes = blocks.map(computeBlockNodeSizes);
+  const blockPositions = blocks.map((block, idx) => layoutBlockWithDagre(block, blockSizes[idx]));
+  const blockOffsets = placeBlocksAtCenter(blocks, blockPositions, blockSizes, anchorCenter.x, anchorCenter.y);
+
+  // Export 과정에서 빠진 도형(타입 미지정, 그룹 없는 마인드맵 도형 등)은 재배치
+  // 텍스트에도 없으므로 아래 루프에서 아예 안 건드려진다 — 원래 자리에 그대로 남는다.
+  let movedCount = 0;
+  const movedNotes = [];
+  blocks.forEach((block, idx) => {
+    const positions = blockPositions[idx];
+    const offset = blockOffsets[idx];
+    const sizes = blockSizes[idx];
+    block.nodes.forEach((info, mermaidId) => {
+      const m = /^N(\d+)$/.exec(mermaidId);
+      if (!m) return;
+      const note = getNote(Number(m[1]));
+      if (!note) return;
+      const center = positions.get(mermaidId);
+      const size = sizes.get(mermaidId);
+      note.x = center.x + offset.x - size.w / 2;
+      note.y = center.y + offset.y - size.h / 2;
+      // w/h 는 절대 안 건드린다 — autoSize 도형은 이미 텍스트에 맞는 크기이고,
+      // 수동 리사이즈한 도형의 크기는 그대로 존중돼야 하기 때문이다.
+      const el = noteEl(note.id);
+      if (el) {
+        el.style.left = `${note.x}px`;
+        el.style.top = `${note.y}px`;
+      }
+      movedNotes.push(note);
+      movedCount++;
+    });
+  });
+
+  renderGroups();
+  updateAllArrowGeometry();
+  updateHandles();
+  commitChange();
+  panToNewNotes(movedNotes);
+
+  return { ok: true, warnings, movedCount };
+}
+
+rearrangeBtn.addEventListener("click", () => {
+  const targetIds = rearrangeTargetNoteIds();
+  if (targetIds.length === 0) {
+    alert("재배치할 도형이 없습니다.");
+    return;
+  }
+  const scopeLabel = selectedIds.size > 0 ? `선택된 ${targetIds.length}개` : `캔버스 전체 ${targetIds.length}개`;
+  if (!confirm(`${scopeLabel} 도형을 자동 배치하시겠습니까?`)) return;
+
+  const result = rearrangeNotes(targetIds);
+  if (!result.ok) {
+    alert(result.warnings.join("\n") || "재배치할 수 있는 도형이 없습니다.");
+    return;
+  }
+  if (result.warnings.length > 0) {
+    alert(`일부 도형은 제외되고 나머지만 재배치했습니다.\n\n${result.warnings.join("\n")}`);
+  }
+});
 
 /* ----- Mermaid 가져오기 팝업 UI ----- */
 

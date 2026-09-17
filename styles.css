@@ -10,6 +10,7 @@
   --note-bg: #ffffff;
   --note-border: #b9c6dd;
   --accent: #3b6fd4;
+  --warning: #e8871e; /* 그룹에 속하지 않은 도형 표시색 */
   --text: #1f2733;
   --sidebar-w: 240px;
   /* 마름모(diamond)는 clip-path 로 모양을 오려내는데, border-radius 가 안 먹혀서
@@ -236,6 +237,34 @@ body {
 .resize-handle[data-corner="ne"],
 .resize-handle[data-corner="sw"] {
   cursor: nesw-resize;
+}
+
+/* 다중 선택 경계 상자 우측 상단의 "그룹에서 빼기" 버튼(화면 좌표). JS 가 left 를
+   경계 상자의 오른쪽 끝(r), top 을 위쪽 끝보다 14px 위로 맞춰주면, 이 transform 이
+   오른쪽 끝을 그 x 좌표에 맞춰준다 — NE 리사이즈 핸들과 자리가 겹치면 서로 클릭을
+   가로막으므로(과거 메모 삭제버튼이 겪었던 문제와 같은 종류), 박스 바깥 위쪽으로
+   띄워서 겹치지 않게 한다. */
+#selection-remove-from-group-btn {
+  position: absolute;
+  transform: translateX(-100%);
+  border: 1px solid var(--note-border);
+  background: #fff;
+  border-radius: 6px;
+  padding: 3px 8px;
+  font: inherit;
+  font-size: 11px;
+  color: #55617a;
+  cursor: pointer;
+  box-shadow: 0 2px 8px rgba(31, 39, 51, 0.15);
+}
+
+#selection-remove-from-group-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+#selection-remove-from-group-btn[hidden] {
+  display: none;
 }
 
 /* ===== 무한 평면 ===== */
@@ -489,6 +518,24 @@ body {
   clip-path: var(--diamond-clip-round);
 }
 
+/* ===== 그룹 소속 여부 시각 구분 =====
+   그룹에 안 속한 도형은 점선 + 경고색(주황) 테두리로 눈에 띄게 표시한다. 사각형/원은
+   진짜 border 속성이라 그대로 점선을 줄 수 있지만, 마름모는 border 가 아니라 배경색
+   이중 레이어로 테두리를 흉내내는 방식이라(위 "마름모: border 를 그대로 두고..." 주석
+   참고) 점선 자체를 표현할 방법이 없어서 색만 경고색으로 바꾼다. 선택(.selected)
+   상태보다 이 규칙이 항상 우선한다(속성 선택자가 더 많아 우선순위가 더 높다) — 다이어
+   그램 타입에 따른 모서리 둥글기가 선택 여부와 무관하게 항상 유지되는 것과 같은
+   설계다: "이 도형이 어떤 종류인가"를 나타내는 표시는 선택 상태로 가려지지 않는다. */
+.note[data-shape="rect"]:not([data-grouped="true"]) .note-shape,
+.note[data-shape="ellipse"]:not([data-grouped="true"]) .note-shape {
+  border-color: var(--warning);
+  border-style: dashed;
+}
+
+.note[data-shape="diamond"]:not([data-grouped="true"]) .note-shape {
+  background: var(--warning);
+}
+
 .note.dragging .note-shape {
   box-shadow: 0 10px 26px rgba(31, 39, 51, 0.22);
 }
@@ -737,6 +784,22 @@ body {
 }
 
 #mermaid-import-btn:hover {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+#rearrange-btn {
+  border: 1px solid var(--note-border);
+  background: #fff;
+  border-radius: 6px;
+  padding: 4px 8px;
+  font: inherit;
+  font-size: 11.5px;
+  color: #55617a;
+  cursor: pointer;
+}
+
+#rearrange-btn:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
@@ -1321,25 +1384,6 @@ body {
   font-size: 11px;
   color: #9aa7bd;
   margin-bottom: 4px;
-}
-
-.style-swatches {
-  display: flex;
-  gap: 6px;
-}
-
-.style-swatch {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  border: 1px solid var(--note-border);
-  cursor: pointer;
-  padding: 0;
-}
-
-.style-swatch.active {
-  outline: 2px solid var(--accent);
-  outline-offset: 2px;
 }
 
 .style-btn-row {
