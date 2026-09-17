@@ -241,29 +241,43 @@ body {
 
 /* 다중 선택 경계 상자 우측 상단의 "그룹에서 빼기" 버튼(화면 좌표). JS 가 left 를
    경계 상자의 오른쪽 끝(r), top 을 위쪽 끝보다 14px 위로 맞춰주면, 이 transform 이
-   오른쪽 끝을 그 x 좌표에 맞춰준다 — NE 리사이즈 핸들과 자리가 겹치면 서로 클릭을
-   가로막으므로(과거 메모 삭제버튼이 겪었던 문제와 같은 종류), 박스 바깥 위쪽으로
-   띄워서 겹치지 않게 한다. */
-#selection-remove-from-group-btn {
+   오른쪽 끝을 r(경계 상자 우측 끝)에, 위쪽 끝을 t(경계 상자 상단)보다 위에 맞춰서
+   JS 가 직접 left/top 을 계산해 넣는다(개별 메모의 .note-delete-btn/.note-ungroup-btn
+   과 완전히 같은 18px 원형 버튼 스타일 — 그 둘이 나란히 자리하는 것과 같은 생김새를
+   다중 선택 경계 상자 위에서도 그대로 재현한다). NE 리사이즈 핸들과 자리가 겹치면
+   서로 클릭을 가로막으므로(과거 메모 삭제버튼이 겪었던 문제와 같은 종류), 박스 바깥
+   위쪽으로 띄워서 겹치지 않게 한다. */
+#selection-remove-from-group-btn,
+#selection-delete-btn {
   position: absolute;
-  transform: translateX(-100%);
+  width: 18px;
+  height: 18px;
   border: 1px solid var(--note-border);
+  border-radius: 50%;
   background: #fff;
-  border-radius: 6px;
-  padding: 3px 8px;
-  font: inherit;
-  font-size: 11px;
   color: #55617a;
+  font-size: 13px;
+  line-height: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
-  box-shadow: 0 2px 8px rgba(31, 39, 51, 0.15);
+  box-shadow: 0 2px 6px rgba(31, 39, 51, 0.15);
 }
 
 #selection-remove-from-group-btn:hover {
-  border-color: var(--accent);
   color: var(--accent);
+  border-color: var(--accent);
 }
 
-#selection-remove-from-group-btn[hidden] {
+#selection-delete-btn:hover {
+  color: #fff;
+  background: #d64545;
+  border-color: #d64545;
+}
+
+#selection-remove-from-group-btn[hidden],
+#selection-delete-btn[hidden] {
   display: none;
 }
 

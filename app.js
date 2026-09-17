@@ -15,6 +15,7 @@ const selectionBoxEl = document.getElementById("selection-box");
 const selectionOutlineEl = document.getElementById("selection-outline");
 const resizeHandlesEl = document.getElementById("resize-handles");
 const selectionRemoveFromGroupBtn = document.getElementById("selection-remove-from-group-btn");
+const selectionDeleteBtn = document.getElementById("selection-delete-btn");
 const quickMenuEl = document.getElementById("quick-menu");
 const zoomLabel = document.getElementById("zoom-label");
 const resetBtn = document.getElementById("reset-view");
@@ -969,6 +970,12 @@ selectionRemoveFromGroupBtn.addEventListener("click", (e) => {
   removeSelectedNotesFromGroups();
 });
 
+selectionDeleteBtn.addEventListener("mousedown", (e) => e.stopPropagation());
+selectionDeleteBtn.addEventListener("click", (e) => {
+  e.stopPropagation();
+  deleteSelectedObjects();
+});
+
 /* ===== 사이드바 접기 / 펼치기 ===== */
 
 function setSidebarCollapsed(collapsed) {
@@ -1728,6 +1735,7 @@ function deleteSelectedObjects() {
   Array.from(selectedIds).forEach(removeNoteFromState); // 메모에 딸린 화살표도 같이 지워진다
   Array.from(selectedArrowIds).forEach(removeArrowFromState);
   renderGroups(); // 지운 메모가 그룹에서 빠졌으니 박스를 다시 그린다
+  updateHandles(); // 선택이 비었으니 경계 상자/핸들/버튼도 같이 감춘다
   commitChange();
 }
 
@@ -1797,6 +1805,7 @@ function updateHandles() {
     resizeHandlesEl.hidden = true;
     selectionOutlineEl.hidden = true;
     selectionRemoveFromGroupBtn.hidden = true;
+    selectionDeleteBtn.hidden = true;
     return;
   }
 
@@ -1820,6 +1829,7 @@ function updateHandles() {
     resizeHandlesEl.hidden = true;
     selectionOutlineEl.hidden = true;
     selectionRemoveFromGroupBtn.hidden = true;
+    selectionDeleteBtn.hidden = true;
     return;
   }
 
@@ -1851,9 +1861,21 @@ function updateHandles() {
 
   resizeHandlesEl.hidden = false;
 
-  // 다중 선택(2개 이상)이고, 그중 (잠기지 않은) 그룹에 속한 도형이 하나라도 있을 때만
-  // 보여준다 — 꾸미기 패널의 "그룹에서 빼기" 버튼과 같은 조건, 다중 선택 상황에서
-  // 캔버스 위에서 바로 쓸 수 있게 하는 빠른 진입점일 뿐 새 판정 로직은 아니다.
+  // 다중 선택(2개 이상)일 때만 뜬다 — 개별 메모 호버 버튼(−/×)을 다중 선택 상황에서도
+  // 캔버스 위에서 바로 쓸 수 있게 하는 빠른 진입점일 뿐 새 판정/삭제 로직은 아니다.
+  // ×(전체 삭제)는 항상, −(그룹에서 빼기)는 그중 (잠기지 않은) 그룹 소속이 하나라도
+  // 있을 때만 — 꾸미기 패널 버튼과 같은 조건이다. 개별 메모의 .note-delete-btn(오른쪽)
+  // /.note-ungroup-btn(그 왼쪽) 과 같은 순서로, 경계 상자 바깥 위쪽에 나란히 띄운다
+  // (박스 위에 그대로 얹으면 NE 리사이즈 핸들과 겹쳐 클릭을 가로막기 때문 — 과거 메모
+  // 삭제버튼이 겪었던 문제와 같은 종류).
+  const BTN_SIZE = 18;
+  const BTN_GAP = 4;
+  const btnTop = t - BTN_SIZE - BTN_GAP;
+
+  selectionDeleteBtn.style.left = `${r - BTN_SIZE}px`;
+  selectionDeleteBtn.style.top = `${btnTop}px`;
+  selectionDeleteBtn.hidden = selectedIds.size <= 1;
+
   const canRemoveFromGroup =
     selectedIds.size > 1 &&
     Array.from(selectedIds).some((id) => {
@@ -1861,8 +1883,8 @@ function updateHandles() {
       return group && !group.locked;
     });
   if (canRemoveFromGroup) {
-    selectionRemoveFromGroupBtn.style.left = `${r}px`;
-    selectionRemoveFromGroupBtn.style.top = `${t - 14}px`;
+    selectionRemoveFromGroupBtn.style.left = `${r - BTN_SIZE * 2 - BTN_GAP}px`;
+    selectionRemoveFromGroupBtn.style.top = `${btnTop}px`;
     selectionRemoveFromGroupBtn.hidden = false;
   } else {
     selectionRemoveFromGroupBtn.hidden = true;
@@ -4531,18 +4553,14 @@ function panToNewNotes(newNotes) {
  * Export 결과를 얻으려고 계산하는 동안만 전역을 그 범위로 잠깐 바꿔치기한다(동기
  * 함수라 그 사이에 다른 코드가 끼어들 일이 없어 안전하다). */
 
-// 지금 선택된 도형(들)을 감싸는 그룹까지 포함해서 재배치 대상 id 목록을 만든다.
-// 선택이 없으면 페이지 전체. "선택 범위(같은 그룹 내 도형들)만 재배치"라는 요구사항
-// 그대로 — 그룹의 일부만 골라 선택해도 그 그룹 전체가 같이 움직인다(diagramType
-// 변경이 그룹 전체로 확장되는 것과 같은 원리).
+// 재배치 대상 id 목록 — 선택이 없으면 페이지 전체, 있으면 딱 선택된 것만이다.
+// (예전엔 선택된 도형이 속한 그룹 전체로 자동 확장했는데, 큰 그룹의 일부만 골라
+// 선택해도 그룹 전체가 끌려나와 "선택 범위 밖 도형까지 다 뽑힌다"는 문제가 있어서
+// 뺐다 — generateMermaid() 는 스코프에 없는 멤버를 subgraph 에서 알아서 빼고
+// 돌려주므로, 그룹을 억지로 통째로 넣지 않아도 남은 부분은 별 문제 없이 처리된다.)
 function rearrangeTargetNoteIds() {
   if (selectedIds.size === 0) return notes.map((n) => n.id);
-  const ids = new Set(selectedIds);
-  selectedIds.forEach((id) => {
-    const group = groupOfNote(id);
-    if (group) group.noteIds.forEach((memberId) => ids.add(memberId));
-  });
-  return [...ids];
+  return [...selectedIds];
 }
 
 function rearrangeNotes(targetNoteIds) {
