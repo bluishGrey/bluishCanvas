@@ -2346,6 +2346,15 @@ function renderGroups() {
       label.appendChild(lockIcon);
     }
 
+    const groupType = groupDiagramType(group);
+    if (groupType) {
+      const typeIcon = document.createElement("span");
+      typeIcon.className = "group-type-icon";
+      typeIcon.textContent = groupType === "mindmap" ? "🧠" : "🔀";
+      typeIcon.title = DIAGRAM_TYPE_LABELS[groupType];
+      label.appendChild(typeIcon);
+    }
+
     const nameEl = document.createElement("span");
     nameEl.className = "group-name";
     nameEl.textContent = group.name;
@@ -2388,9 +2397,15 @@ function updateNoteGroupUI() {
     if (!el) return;
     el.dataset.diagramType = note.diagramType || "none";
 
+    const group = groupOfNote(note.id);
+
+    // 호버 시 소속 그룹을 알려주는 네이티브 툴팁. 그룹 없음이면 title 자체를 지워서
+    // 안 뜨게 한다(억지로 "그룹 없음"을 매번 띄우면 대다수인 미소속 도형에서 소음이 됨).
+    if (group) el.title = `그룹: ${group.name}`;
+    else el.removeAttribute("title");
+
     const btn = el.querySelector(".note-ungroup-btn");
     if (!btn) return;
-    const group = groupOfNote(note.id);
     btn.hidden = !group;
     if (group) {
       btn.disabled = !!group.locked;
@@ -3220,6 +3235,7 @@ canvas.addEventListener("mousedown", (e) => {
     setSelection(enclosedIds); // 방금 묶은 것들을 선택해둔다 (바로 타입을 바꾸기 편하게)
     justBoxSelected = true; // 뒤따라오는 click 이 이 선택을 지우지 않도록
     commitChange();
+    setLassoMode(false); // 한 번 묶었으면 일반 선택 모드로 자동 복귀 (계속 올가미로 남아있지 않게)
   };
 
   document.addEventListener("mousemove", onMove);
