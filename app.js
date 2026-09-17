@@ -49,6 +49,7 @@ const mermaidCloseBtn = document.getElementById("mermaid-close-btn");
 const mermaidWarningsEl = document.getElementById("mermaid-warnings");
 const mermaidBlocksEl = document.getElementById("mermaid-blocks");
 const groupContextMenuEl = document.getElementById("group-context-menu");
+const noteContextMenuEl = document.getElementById("note-context-menu");
 const quickMenuGroupHintEl = document.getElementById("quick-menu-group-hint");
 const helpBtn = document.getElementById("help-btn");
 const helpPopup = document.getElementById("help-popup");
@@ -1376,10 +1377,27 @@ function updateArrowGeometry(arrow) {
   });
 
   updateArrowLabelPosition(arrow, g, p1, p2);
+  updateArrowDeleteButtonPosition(g, p1, p2);
 }
 
 function updateAllArrowGeometry() {
   arrows.forEach(updateArrowGeometry);
+}
+
+// 삭제(×) 버튼을 화살표 중간 지점에서 선(수직) 방향으로 살짝 띄워서 놓는다 —
+// 정확히 중간에 두면 라벨(있을 경우)과 겹치기 때문. 화살표가 움직이거나
+// 크기가 바뀔 때마다(updateArrowGeometry) 매번 다시 계산된다.
+// 라벨은 항상 선의 정확히 50% 지점에, 화살표 각도와 무관하게 가로로 넓게 펼쳐지는
+// 모양(회전 안 된 텍스트 알약)으로 놓인다. 그래서 "수직으로 살짝 띄우기" 방식은
+// 화살표가 세로에 가까울 때(라벨의 가로 폭이 그대로 버튼과 겹치는 방향) 겹침을
+// 못 피한다 — 각도에 관계없이 항상 안 겹치게, 라벨과 다른 지점(25%)에 둔다.
+function updateArrowDeleteButtonPosition(g, p1, p2) {
+  const btn = g.querySelector(".arrow-delete-btn");
+  if (!btn) return;
+  const t = 0.25;
+  const x = p1.x + (p2.x - p1.x) * t;
+  const y = p1.y + (p2.y - p1.y) * t;
+  btn.setAttribute("transform", `translate(${x}, ${y})`);
 }
 
 // 화살표 중간 지점에 라벨(배경+텍스트)을 그린다. 라벨이 없으면 감춘다.
@@ -1456,10 +1474,34 @@ function renderArrow(arrow) {
   labelText.setAttribute("dominant-baseline", "middle");
   labelText.setAttribute("hidden", "");
 
+  // 선택됐을 때만 보이는 삭제(×) 버튼. 메모의 호버형 삭제 버튼과 같은 생김새를
+  // SVG 로 흉내낸다(원 + × 글자). 보이기/숨기기는 CSS 에서 .arrow.selected 를
+  // 보고 처리하므로(hover 로 보이는 .note-delete-btn 과 같은 원리, 트리거만
+  // hover 대신 선택 상태), 여기서는 위치만 매번 계산해서 옮겨준다.
+  const deleteBtn = document.createElementNS(SVG_NS, "g");
+  deleteBtn.setAttribute("class", "arrow-delete-btn");
+
+  const deleteBtnCircle = document.createElementNS(SVG_NS, "circle");
+  deleteBtnCircle.setAttribute("r", "9");
+
+  const deleteBtnText = document.createElementNS(SVG_NS, "text");
+  deleteBtnText.setAttribute("text-anchor", "middle");
+  deleteBtnText.setAttribute("dominant-baseline", "central");
+  deleteBtnText.textContent = "×";
+
+  deleteBtn.appendChild(deleteBtnCircle);
+  deleteBtn.appendChild(deleteBtnText);
+  deleteBtn.addEventListener("mousedown", (e) => e.stopPropagation());
+  deleteBtn.addEventListener("click", (e) => {
+    e.stopPropagation();
+    deleteArrow(arrow.id);
+  });
+
   g.appendChild(hit);
   g.appendChild(visible);
   g.appendChild(labelBg);
   g.appendChild(labelText);
+  g.appendChild(deleteBtn);
   arrowsLayerEl.appendChild(g);
 
   // 화살표 선(정확히는 두꺼운 클릭 판정용 선) 클릭 → 선택. 메모 클릭과 같은 원칙:
@@ -1578,6 +1620,12 @@ function removeArrowFromState(id) {
   const el = arrowEl(id);
   if (el) el.remove();
   selectedArrowIds.delete(id);
+}
+
+// 화살표의 × 버튼에서 호출 — 메모의 deleteNote() 와 같은 자리의, 화살표 버전.
+function deleteArrow(id) {
+  removeArrowFromState(id);
+  commitChange();
 }
 
 /* ===== 화살표 라벨 편집 (더블클릭으로 시작) =====
@@ -2582,6 +2630,42 @@ document.addEventListener("mousedown", (e) => {
   }
 });
 
+/* ===== 도형 Shift+우클릭 메뉴 (다이어그램 타입 빠른 선택) =====
+ * 꾸미기 패널의 "다이어그램 타입" 버튼과 완전히 같은 동작(applyStyleToSelection)을
+ * 그대로 재사용한다 — 다중 선택 시 전체 적용, 그룹 소속이면 그룹 전체로 확장되는 것도
+ * 전부 공짜로 따라온다. 이 메뉴는 새 로직을 담지 않고 단지 그 동작으로 가는 지름길이다. */
+
+function openNoteContextMenu(clientX, clientY) {
+  const firstId = selectedIds.values().next().value;
+  const first = getNote(firstId);
+  noteContextMenuEl.querySelectorAll(".note-diagram-type-item").forEach((btn) => {
+    btn.classList.toggle("active", !!first && (first.diagramType || "none") === btn.dataset.diagramType);
+  });
+
+  noteContextMenuEl.hidden = false;
+  const menuRect = noteContextMenuEl.getBoundingClientRect();
+  const left = Math.min(clientX, window.innerWidth - menuRect.width - 8);
+  const top = Math.min(clientY, window.innerHeight - menuRect.height - 8);
+  noteContextMenuEl.style.left = `${Math.max(8, left)}px`;
+  noteContextMenuEl.style.top = `${Math.max(8, top)}px`;
+}
+
+function closeNoteContextMenu() {
+  noteContextMenuEl.hidden = true;
+}
+
+noteContextMenuEl.addEventListener("click", (e) => {
+  const btn = e.target.closest(".note-diagram-type-item");
+  if (btn) applyStyleToSelection("diagramType", btn.dataset.diagramType);
+  closeNoteContextMenu();
+});
+
+document.addEventListener("mousedown", (e) => {
+  if (!noteContextMenuEl.hidden && !noteContextMenuEl.contains(e.target)) {
+    closeNoteContextMenu();
+  }
+});
+
 /* ===== 메모 꾸미기 (사이드바 "꾸미기" 패널) =====
  * 배경색/글자크기/정렬/테두리굵기는 note 객체의 필드(bg/fontSize/textAlign/borderWidth)로
  * 저장되고, 다른 note 필드들과 똑같이 cloneNotes/save/export·import 를 통째로 타고 다니므로
@@ -2770,10 +2854,17 @@ function renderNote(note) {
 }
 
 function makeNoteInteractive(el, note, textEl) {
-  // --- 우클릭: 화살표 연결 모드 시작 ---
+  // --- 우클릭: 화살표 연결 모드 시작. Shift+우클릭: 대신 다이어그램 타입 메뉴 ---
+  // (기존의 "우클릭 한 번으로 바로 연결 시작"하는 빠른 동작은 그대로 두고,
+  // Shift 를 눌렀을 때만 메뉴로 갈라지게 해서 기존 습관을 깨지 않는다.)
   el.addEventListener("contextmenu", (e) => {
     e.preventDefault();
     e.stopPropagation(); // 캔버스의 빈 곳 우클릭 퀵메뉴가 대신 뜨지 않도록 막는다.
+    if (e.shiftKey) {
+      if (!selectedIds.has(note.id)) selectOnly(note.id);
+      openNoteContextMenu(e.clientX, e.clientY);
+      return;
+    }
     startArrowDraft(note.id);
   });
 
@@ -3014,6 +3105,8 @@ quickMenuEl.addEventListener("click", (e) => {
     const p = quickMenuWorldPos;
     const el = createNote(p.x - DEFAULT_NOTE_W / 2, p.y - DEFAULT_NOTE_H / 2, "", nextShape, quickMenuGroupId);
     el.querySelector(".note-text").focus();
+  } else if (btn.dataset.action === "lasso") {
+    setLassoMode(true);
   } else if (btn.dataset.shape) {
     setNextShape(btn.dataset.shape);
   }
@@ -3338,6 +3431,10 @@ document.addEventListener("keydown", (e) => {
     }
     if (!groupContextMenuEl.hidden) {
       closeGroupContextMenu();
+      return;
+    }
+    if (!noteContextMenuEl.hidden) {
+      closeNoteContextMenu();
       return;
     }
     if (lassoMode) setLassoMode(false); // 올가미 모드에서 빠져나오기

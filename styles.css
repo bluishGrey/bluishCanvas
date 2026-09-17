@@ -344,6 +344,41 @@ body {
   pointer-events: auto;
 }
 
+/* 화살표를 선택했을 때만 나타나는 삭제(×) 버튼. 메모의 호버형 삭제 버튼(.note-delete-btn)과
+   같은 생김새를 SVG 로 흉내낸다 — 트리거만 호버 대신 .arrow.selected 로 다르다. */
+.arrow-delete-btn {
+  opacity: 0;
+  pointer-events: none;
+  cursor: pointer;
+  transition: opacity 0.12s;
+}
+
+.arrow.selected .arrow-delete-btn {
+  opacity: 1;
+  pointer-events: auto;
+}
+
+.arrow-delete-btn circle {
+  fill: #fff;
+  stroke: var(--note-border);
+  stroke-width: 1;
+}
+
+.arrow-delete-btn text {
+  font-size: 13px;
+  fill: #55617a;
+  user-select: none;
+}
+
+.arrow-delete-btn:hover circle {
+  fill: #d64545;
+  stroke: #d64545;
+}
+
+.arrow-delete-btn:hover text {
+  fill: #fff;
+}
+
 /* ===== 메모 카드 ===== */
 /* 가로/세로 크기(width, height)는 app.js 가 인라인 스타일로 지정한다 (크기조절 대상). */
 .note {
@@ -1101,7 +1136,8 @@ body {
 
 /* 그룹 우클릭 메뉴는 #quick-menu 와 같은 모양(.quick-menu-item 등 재사용)이라
    위치 잡는 규칙만 따로 둔다. */
-#group-context-menu {
+#group-context-menu,
+#note-context-menu {
   position: fixed;
   min-width: 170px;
   background: #fff;
