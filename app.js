@@ -1959,6 +1959,10 @@ function createArrow(fromId, toId) {
   const arrow = { id: nextArrowId++, fromId, toId };
   arrows.push(arrow);
   renderArrow(arrow);
+  // 새 화살표가 마인드맵 그룹의 트리 구조(누가 몇 번째 가지인지)를 바꿀 수 있으므로
+  // 다시 그린다 — renderGroups() 는 박스 자체는 바뀔 게 없어도(도형 위치/크기는
+  // 그대로라) 가지별 색상(refreshMindmapBranchColors)까지 함께 다시 계산해준다.
+  renderGroups();
   commitChange();
   return arrow;
 }
@@ -1975,6 +1979,7 @@ function removeArrowFromState(id) {
 // 화살표의 × 버튼에서 호출 — 메모의 deleteNote() 와 같은 자리의, 화살표 버전.
 function deleteArrow(id) {
   removeArrowFromState(id);
+  renderGroups(); // createArrow 와 같은 이유 — 마인드맵 가지 색 재계산
   commitChange();
 }
 
@@ -3013,6 +3018,7 @@ function renderGroups() {
   });
 
   updateNoteGroupUI();
+  refreshMindmapBranchColors();
 }
 
 // 각 메모의 "그룹에서 빼기"(−) 버튼을 지금 그룹 소속 상태에 맞게 보이기/숨기기/
@@ -4321,6 +4327,87 @@ function buildMindmapTree(group, groupArrows) {
   }
 
   return { root: roots[0], childrenOf };
+}
+
+/* ===== 마인드맵 가지별 색상 구분 =====
+ * 1차 가지(중심의 직계 자식)마다 골든 앵글(137.5°)로 고유 hue 를 배정하고, 그
+ * 자손들은 같은 hue 를 그대로 물려받되 depth 가 깊어질수록 --note-bg 에 섞이는
+ * 비율을 낮춰 점점 옅어지게 한다 — 기존 --fill-mindmap 등이 타입색 하나를
+ * --note-bg 에 color-mix 하는 것과 완전히 같은 방식(다만 타입 전체에 고정 비율
+ * 하나 대신, 가지마다 다른 hue + depth 마다 다른 비율을 쓴다). var(--note-bg) 를
+ * 색 문자열 안에 그대로 남겨두므로, 라이트/다크 테마가 바뀌면 이 색도 CSS 단에서
+ * 저절로 같이 바뀐다 — JS 가 지금이 어느 테마인지 알 필요가 전혀 없다(다크 모드는
+ * --note-bg 자체가 어두운 색이라, 같은 color-mix 비율이어도 결과가 자동으로
+ * 어두운 톤이 되어 --text 와의 대비가 유지된다).
+ *
+ * 가지 hue 는 "몇 번째로 생성된 가지인가"(note.mindmapBranchSeq, 그룹마다
+ * group.nextMindmapBranchSeq 로 순번을 매긴다)로만 정해지고, 한 번 배정되면
+ * 그 도형이 살아있는 한 절대 바뀌지 않는다 — 그래서 다른 가지가 나중에
+ * 추가/삭제돼도 이미 있던 가지들의 색은 그대로 유지된다. 균등분할(360/n) 대신
+ * 골든 앵글을 쓰는 이유가 바로 이것 — n(가지 개수)이 바뀌어도 재계산이 필요 없다. */
+const MINDMAP_BRANCH_HUE_STEP = 137.5;
+const MINDMAP_BRANCH_SATURATION = 70;
+const MINDMAP_BRANCH_LIGHTNESS = 42;
+const MINDMAP_BRANCH_MIX_BASE = 40; // depth 1(1차 가지 자신) — 가장 진하게
+const MINDMAP_BRANCH_MIX_STEP = 11; // depth 하나 깊어질 때마다 이만큼씩 옅어짐
+const MINDMAP_BRANCH_MIX_MIN = 10; // 아무리 깊어져도 가지 소속을 알아볼 최소한의 색은 남긴다
+
+function mindmapBranchMixPercent(depth) {
+  return Math.max(MINDMAP_BRANCH_MIX_MIN, MINDMAP_BRANCH_MIX_BASE - MINDMAP_BRANCH_MIX_STEP * (depth - 1));
+}
+
+function applyMindmapBranchColor(noteId, hue, depth) {
+  const el = noteEl(noteId);
+  if (!el) return;
+  const pct = mindmapBranchMixPercent(depth);
+  el.style.setProperty(
+    "--note-custom-bg",
+    `color-mix(in srgb, hsl(${hue}, ${MINDMAP_BRANCH_SATURATION}%, ${MINDMAP_BRANCH_LIGHTNESS}%) ${pct}%, var(--note-bg))`
+  );
+}
+
+// 이 페이지의 모든 마인드맵 그룹을 훑어 가지별 색을 다시 계산해 적용한다.
+// renderGroups() 의 마지막 단계로 호출되므로(그 함수가 이미 "그룹 관련 상태가
+// 바뀌었으니 다시 그려라"의 공용 진입점 — 올가미/드래그편입/해제/잠금/복제/
+// 재배치/가져오기/실행취소/페이지전환 등 대부분의 경로가 이미 그 함수를 거친다),
+// 화살표 생성/삭제(createArrow/deleteArrow) 두 곳에만 renderGroups() 호출을
+// 추가로 얹었다 — 도형 위치가 안 바뀌어 원래는 그룹 박스를 다시 그릴 필요가
+// 없었던 유일한 경로들이기 때문.
+//
+// 매번 이 페이지의 마인드맵 도형 전체를 먼저 기본값(커스텀 배경 없음)으로
+// 되돌린 뒤, 유효한 트리를 이루는 그룹에 대해서만 다시 칠한다 — 그래서 그룹에서
+// 빠졌거나 화살표 구조가 트리가 아니게 된 도형은 자동으로 원래 타입색으로
+// 돌아가고, "예전에 칠했던 색이 남아있는" 경우를 따로 추적할 필요가 없다.
+function refreshMindmapBranchColors() {
+  notes.forEach((note) => {
+    if (note.diagramType !== "mindmap") return;
+    const el = noteEl(note.id);
+    if (el) el.style.removeProperty("--note-custom-bg");
+  });
+
+  groups.forEach((group) => {
+    if (groupDiagramType(group) !== "mindmap") return;
+    const memberIdSet = new Set(group.noteIds);
+    const groupArrows = arrows.filter((a) => memberIdSet.has(a.fromId) && memberIdSet.has(a.toId));
+    const tree = buildMindmapTree(group, groupArrows);
+    if (tree.error) return; // 트리가 아니면 가지 구분을 포기 — 위에서 이미 기본값으로 되돌려둠
+
+    if (group.nextMindmapBranchSeq == null) group.nextMindmapBranchSeq = 0;
+
+    (tree.childrenOf.get(tree.root) || []).forEach((branchId) => {
+      const branchNote = getNote(branchId);
+      if (!branchNote) return;
+      if (branchNote.mindmapBranchSeq == null) {
+        branchNote.mindmapBranchSeq = group.nextMindmapBranchSeq++;
+      }
+      const hue = (branchNote.mindmapBranchSeq * MINDMAP_BRANCH_HUE_STEP) % 360;
+      const walk = (id, depth) => {
+        applyMindmapBranchColor(id, hue, depth);
+        (tree.childrenOf.get(id) || []).forEach((childId) => walk(childId, depth + 1));
+      };
+      walk(branchId, 1);
+    });
+  });
 }
 
 function generateMermaid() {
