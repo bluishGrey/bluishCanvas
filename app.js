@@ -575,8 +575,10 @@ function startRenaming(nameEl, node) {
 function createPage(parentFolder) {
   const id = `p${nextTreeId++}`;
   pagesData[id] = createEmptyPageData();
-  const node = { type: "page", id, name: "새 페이지" };
   const targetArray = parentFolder ? (parentFolder.children || (parentFolder.children = [])) : tree;
+  // 같은 위치(같은 폴더 안, 또는 같은 최상위)에 이미 "새 페이지"가 있으면 "새 페이지 2"
+  // 처럼 번호를 붙인다 — 가져오기 때 이름 충돌을 피하던 uniqueNameAmong 을 그대로 쓴다.
+  const node = { type: "page", id, name: uniqueNameAmong(targetArray, "새 페이지") };
   targetArray.push(node);
   if (parentFolder) parentFolder.expanded = true;
   switchToPage(id); // 안에서 save() 까지 처리된다 (트리 구조는 안 바뀌는 일반 전환이라 렌더는 없음)
@@ -585,8 +587,8 @@ function createPage(parentFolder) {
 
 function createFolder(parentFolder) {
   const id = `f${nextTreeId++}`;
-  const node = { type: "folder", id, name: "새 폴더", expanded: true, children: [] };
   const targetArray = parentFolder ? (parentFolder.children || (parentFolder.children = [])) : tree;
+  const node = { type: "folder", id, name: uniqueNameAmong(targetArray, "새 폴더"), expanded: true, children: [] };
   targetArray.push(node);
   if (parentFolder) parentFolder.expanded = true;
   renderSidebar();
@@ -2719,6 +2721,63 @@ function renderGroups() {
       e.preventDefault();
       e.stopPropagation();
       openGroupContextMenu(e.clientX, e.clientY, group.id);
+    });
+
+    // 이름표 자체를 클릭하면 그룹 전체 선택, 드래그하면 그룹 전체 이동(멤버 도형을
+    // 하나하나 옮기지 않고 이름표 하나로 통째로 옮길 수 있게). 이 두 동작은 "움직였는가"
+    // 로 갈린다 — 메모 드래그(위쪽 note 드래그 핸들러)와 같은 3px 임계값 판정 방식.
+    // 잠긴 그룹은 선택은 되지만 실제로 옮겨지진 않는다(이동 자체를 막는 기존 규칙과 동일).
+    // 이름 변경 입력칸(input.group-name-input)은 자기 mousedown 에서 이미
+    // stopPropagation 하므로, 편집 중 클릭이 여기로 새어 들어와 선택을 건드리지 않는다.
+    label.addEventListener("mousedown", (e) => {
+      if (e.button !== 0) return;
+      e.stopPropagation(); // 캔버스 빈 곳 드래그(사각형 선택)로 안 번지게
+
+      const canDrag = !group.locked;
+      const startPositions = group.noteIds
+        .map((id) => getNote(id))
+        .filter(Boolean)
+        .map((n) => ({ id: n.id, el: noteEl(n.id), x: n.x, y: n.y }));
+
+      const startX = e.clientX;
+      const startY = e.clientY;
+      let moved = false;
+
+      if (canDrag) startPositions.forEach((p) => p.el && p.el.classList.add("dragging"));
+
+      const onMove = (ev) => {
+        if (Math.abs(ev.clientX - startX) + Math.abs(ev.clientY - startY) > 3) moved = true;
+        if (!canDrag) return;
+        const dx = (ev.clientX - startX) / view.scale;
+        const dy = (ev.clientY - startY) / view.scale;
+        startPositions.forEach((p) => {
+          const n = getNote(p.id);
+          if (!n) return;
+          n.x = p.x + dx;
+          n.y = p.y + dy;
+          if (p.el) {
+            p.el.style.left = `${n.x}px`;
+            p.el.style.top = `${n.y}px`;
+          }
+        });
+        updateHandles();
+        updateAllArrowGeometry();
+        updateGroupBoxGeometry();
+      };
+
+      const onUp = () => {
+        document.removeEventListener("mousemove", onMove);
+        document.removeEventListener("mouseup", onUp);
+        startPositions.forEach((p) => p.el && p.el.classList.remove("dragging"));
+        if (moved) {
+          if (canDrag) commitChange();
+        } else {
+          selectGroupMembers(group.id);
+        }
+      };
+
+      document.addEventListener("mousemove", onMove);
+      document.addEventListener("mouseup", onUp);
     });
 
     if (group.locked) {

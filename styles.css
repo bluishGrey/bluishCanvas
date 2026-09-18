@@ -168,7 +168,10 @@ body {
   border-style: solid;
 }
 
-/* 이름 라벨 + 해제 버튼만 클릭을 받는다 */
+/* 이름 라벨 + 해제 버튼만 클릭을 받는다. 클릭=그룹 전체 선택, 드래그=그룹 전체 이동,
+   더블클릭=이름 변경(잠긴 그룹도 선택은 되지만 드래그는 안 먹는다 — app.js 참고)이라
+   cursor 는 "옮길 수 있다"는 뜻의 move 로 둔다(실제 텍스트 편집은 더블클릭으로 나타나는
+   입력칸 위에서만 별도로 text 커서가 뜬다). */
 .group-label {
   position: absolute;
   top: -11px;
@@ -184,7 +187,7 @@ body {
   line-height: 1.6;
   white-space: nowrap;
   pointer-events: auto;
-  cursor: text;
+  cursor: move;
   transition: transform 0.1s, box-shadow 0.1s, border-radius 0.1s;
 }
 
