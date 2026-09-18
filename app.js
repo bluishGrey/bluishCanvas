@@ -36,6 +36,7 @@ const stylePanelEmptyEl = document.getElementById("style-panel-empty");
 const stylePanelBodyEl = document.getElementById("style-panel-body");
 const removeFromGroupBtn = document.getElementById("remove-from-group-btn");
 const groupDropHintEl = document.getElementById("group-drop-hint");
+const canvasNoticeEl = document.getElementById("canvas-notice");
 const sidebarSearchInput = document.getElementById("sidebar-search-input");
 const canvasSearchEl = document.getElementById("canvas-search");
 const canvasSearchInput = document.getElementById("canvas-search-input");
@@ -1745,8 +1746,20 @@ function arrowsInScreenRect(rx1, ry1, rx2, ry2) {
   return ids;
 }
 
+// 같은 방향(from→to)으로 이미 연결된 화살표가 있는지. 반대 방향(to→from)은 다른
+// 연결이므로 여기서 걸리지 않는다 — 마인드맵에서는 트리 검사가 따로 막아주고,
+// 플로우차트에서는 왕복 흐름이 정상적인 표현이라 허용해야 한다.
+function findArrowBetween(fromId, toId) {
+  return arrows.find((a) => a.fromId === fromId && a.toId === toId) || null;
+}
+
+// 같은 두 도형을 같은 방향으로 잇는 화살표는 화면에서 완전히 포개져 육안으로 구분이
+// 안 되고(그래서 실수로 여러 번 만들기 쉽다), 마인드맵 변환에서는 "부모가 둘"로
+// 잘못 잡히는 원인이 되기도 한다. 그래서 만드는 단계에서 아예 막는다 — 모든 생성
+// 경로가 이 함수를 거치므로 여기 한 곳만 막으면 된다.
 function createArrow(fromId, toId) {
   if (fromId === toId) return null;
+  if (findArrowBetween(fromId, toId)) return null;
   const arrow = { id: nextArrowId++, fromId, toId };
   arrows.push(arrow);
   renderArrow(arrow);
@@ -1915,11 +1928,19 @@ function cancelArrowDraft() {
   arrowDraftEl.setAttribute("hidden", "");
 }
 
-function completeArrowDraft(toId) {
+function completeArrowDraft(toId, clientX, clientY) {
   if (!arrowDraft) return;
   const fromId = arrowDraft.fromId;
   cancelArrowDraft();
   if (fromId === toId) return; // 자기 자신에게는 연결하지 않는다
+  // 이미 같은 방향으로 이어져 있으면 createArrow 가 어차피 막지만, 그냥 아무 일도
+  // 안 일어나면 "왜 안 되지?" 싶으므로 커서 옆에 짧게 이유를 알려준다.
+  if (findArrowBetween(fromId, toId)) {
+    if (clientX !== undefined && clientY !== undefined) {
+      showCanvasNotice(clientX, clientY, "이미 연결된 화살표입니다");
+    }
+    return;
+  }
   createArrow(fromId, toId);
 }
 
@@ -2395,6 +2416,22 @@ function showGroupDropHint(clientX, clientY, groupName) {
 
 function hideGroupDropHint() {
   groupDropHintEl.hidden = true;
+}
+
+// 커서 옆에 잠깐 떴다 저절로 사라지는 안내. alert 과 달리 흐름을 끊지 않아서,
+// "방금 한 동작이 왜 아무 효과가 없었는지"처럼 굳이 확인 버튼까지 누르게 할 필요는
+// 없는 안내에 쓴다. 연달아 뜨면 이전 타이머를 지우고 새로 센다.
+let canvasNoticeTimer = null;
+function showCanvasNotice(clientX, clientY, text) {
+  canvasNoticeEl.textContent = text;
+  canvasNoticeEl.style.left = `${clientX + 16}px`;
+  canvasNoticeEl.style.top = `${clientY + 16}px`;
+  canvasNoticeEl.hidden = false;
+  if (canvasNoticeTimer !== null) clearTimeout(canvasNoticeTimer);
+  canvasNoticeTimer = setTimeout(() => {
+    canvasNoticeEl.hidden = true;
+    canvasNoticeTimer = null;
+  }, 1600);
 }
 
 /* 아직 어떤 그룹에도 속하지 않은 도형들만으로 새 그룹(들)을 만든다.
@@ -3164,7 +3201,7 @@ function makeNoteInteractive(el, note, textEl) {
     if (arrowDraft) {
       e.preventDefault();
       e.stopPropagation();
-      completeArrowDraft(note.id);
+      completeArrowDraft(note.id, e.clientX, e.clientY);
       return;
     }
 
@@ -4551,36 +4588,24 @@ function layoutBlockWithDagre(block, sizes) {
  * 넘는 후손"이 애초에 나올 수 없게 만드는 방식 — 사후에 각도를 잘라내는(clamp)
  * 방식이 아니다.
  *
- * 부채꼴 폭을 좁게 강제하면 부작용으로, 한 부모 밑에 형제가 아주 많은 경우(예: 한
- * 가지에 자식 10개) 그 좁은 폭 안에 다 욱여넣다 보니 형제끼리 각도 간격이 너무
- * 촘촘해져 실제로 겹칠 수 있다. 그래서 간선 길이(edgeLength)는 "플로우차트(dagre)의
- * 기본 레벨 간격과 비슷한 짧은 기본값"에서 시작해서, 실제로 겹칠 위험이 있는 만큼만
- * 필요한 최소한으로 늘어난다(짧게 유지가 먼저, 겹침 방지가 그 다음이 아니라 —
- * 겹침 방지가 항상 최우선이고, 그걸 만족하는 한 최대한 짧게 유지한다는 뜻) — 아래
- * 두 가지 위험을 각각 확인해서 더 큰 쪽을 반영한다:
- *  1) 부모→자식 정렬 겹침: 같은 각도로 쭉 이어지는 사슬(자식이 하나뿐인 노드가
- *     연달아 있는 경우)은 부모와 자식이 거의 같은 방향에 있어서, 그 방향으로 두
- *     도형이 서로 밀고 들어갈 수 있다. 두 도형의 실제 크기(자동 높이조정 포함)와
- *     둘 사이의 각도 차이로부터, "이 두 도형이 딱 안 겹치는 최소 거리"를 축별
- *     겹침 회피 공식(가로 차가 두 반너비 합 이상이거나, 세로 차가 두 반높이 합
- *     이상이면 안 겹침 — 둘 중 하나만 만족하면 되므로 더 작은 쪽을 취함)으로
- *     정확히 계산해서 모든 부모-자식 쌍 중 최댓값을 쓴다.
- *  2) 형제끼리 부채꼴 안에서 너무 촘촘함: 부모 기준 재귀 모델에서는 한 부모의 모든
- *     자식이 정확히 반지름 edgeLength 인 원 위에 있으므로, 그 원에서 형제 사이
- *     호(arc) 길이가 항상 안전한 최소값 이상이 되도록 부모마다 역산해서 최댓값을
- *     쓴다.
+ * 간선 길이(화살표 길이)는 **화살표 하나하나마다 따로**, 오직 "이 화살표로 이어지는
+ * 두 도형이 물리적으로 겹치는가"만 보고 정한다: 도형을 각각 "가장 긴 변을 지름으로
+ * 하는 원"으로 감싸고(반지름 = max(너비,높이)/2, 여기에 여유 마진을 더함), 그 두 원이
+ * 서로 닿지 않는 최소 거리 = 두 반지름의 합을 그 화살표의 길이로 쓴다. 원은 방향을
+ * 타지 않으므로, 각도가 아무리 기울어 있어도 이 한 값이면 그 부모-자식은 절대 안 겹친다.
  *
- * 이 edgeLength 는 트리 전체가 공유하는 하나의 값이 아니라, **가지(1단계 자식)마다
- * 독립적으로** 계산한다 — 한 가지가 자식을 5개 둬서 위 두 위험 때문에 자기 몫의
- * edgeLength 가 커져도, 자식이 없거나 적은 다른 가지는 그 사정과 무관하게 dagre
- * 수준의 짧은 값을 그대로 유지한다("이 가지는 위험하니 길게, 저 가지는 안전하니
- * 짧게"). 대신 "화살표 길이가 트리 전체에서 항상 같다"는 성질은 "같은 가지 안에서는
- * 항상 같다"로 좁혀진다 — 가지끼리는 원래 자손 수와 무관하게 정확히 360°/N 씩
- * 떨어져 있어서(부채꼴 규칙) 서로 다른 반지름을 쓰더라도 실질적인 충돌 위험이
- * 없다(가지 개수가 극단적으로 많고 길이 차이도 극단적인 인위적 사례로 별도 검증함). */
+ * 이 방식의 핵심은 "각 화살표가 자기 두 도형만 본다"는 것이다 — 형제가 몇 개인지,
+ * 각도가 몇 도인지, 다른 가지가 얼마나 복잡한지는 전혀 개입하지 않는다. 예전 방식은
+ * 한 값(가지별 하나)을 여러 위험의 최댓값으로 정했기 때문에, "형제가 촘촘하다"는
+ * 무관한 사정이 중심→가지 같은 전혀 다른 화살표까지 같이 밀어 올리는 부작용이 있었다.
+ * 지금은 그런 전파 경로 자체가 구조적으로 존재하지 않는다.
+ *
+ * 대신 이 규칙은 부모-자식만 보장한다 — 형제끼리(부모에서 같은 거리, 각도만 다른
+ * 도형들)의 겹침은 길이가 아니라 각도 문제라 여기서 풀지 않는다. 부채꼴 폭 안에
+ * 형제가 아주 많으면 형제끼리는 겹칠 수 있고, 이건 "각 화살표는 딱 필요한 만큼만
+ * 짧게"를 택한 대가로 받아들인 절충이다. */
 
-const MINDMAP_RADIAL_BASE_EDGE_LENGTH = DEFAULT_NOTE_H + MERMAID_IMPORT_RANKSEP; // dagre 의 부모-자식 기본 간격과 비슷한 짧은 기본값
-const MINDMAP_RADIAL_EDGE_MARGIN = 60; // 겹침 회피 최소 거리 위에 추가로 두는 여백
+const MINDMAP_NODE_CIRCLE_MARGIN = 20; // 도형을 감싼 원의 반지름에 더하는 여유(두 도형 사이엔 그 두 배만큼 빈 공간이 생긴다)
 const MINDMAP_BRANCH_SECTOR_MARGIN = 1.15; // 가지별 부채꼴 반폭에 곱하는 여유 배수(15%)
 
 // { id, children } 형태의 중첩 객체로 바꾼다 — d3.hierarchy() 가 기대하는 입력 모양.
@@ -4590,17 +4615,11 @@ function buildMindmapTreeNode(id, childrenOf) {
 
 const MINDMAP_TREE_SEPARATION = (a, b) => (a.parent === b.parent ? 1 : 2) / Math.max(a.depth, 1);
 
-// 두 축 정렬 사각형(반너비/반높이가 각각 hw1,hh1 / hw2,hh2)이 중심 각도 차 angleDiff
-// 방향으로 거리 d 만큼 떨어져 있을 때, 겹치지 않는 최소 d — 가로 방향으로 필요한
-// 거리(hw1+hw2를 그 방향의 가로 성분(cos)으로 나눈 값)와 세로 방향으로 필요한
-// 거리(hh1+hh2 를 세로 성분(sin)으로 나눈 값) 중 하나만 만족하면 안 겹치므로
-// (박스 겹침은 가로·세로 둘 다 겹쳐야 성립) 둘 중 더 작은 쪽을 쓴다.
-function minNonOverlapDistance(angleDiff, hw1, hh1, hw2, hh2) {
-  const cosA = Math.abs(Math.cos(angleDiff));
-  const sinA = Math.abs(Math.sin(angleDiff));
-  const viaWidth = cosA > 1e-9 ? (hw1 + hw2) / cosA : Infinity;
-  const viaHeight = sinA > 1e-9 ? (hh1 + hh2) / sinA : Infinity;
-  return Math.min(viaWidth, viaHeight);
+// 도형을 감싸는 원의 반지름 — 가장 긴 변을 지름으로 삼고(어느 방향으로 기울어도
+// 도형 전체가 이 원 안에 들어간다) 여유 마진을 더한다. 두 도형의 이 반지름을 더하면
+// 그 둘이 어떤 각도로 놓이든 절대 안 겹치는 최소 중심간 거리가 된다.
+function mindmapNodeRadius(size) {
+  return Math.max(size.w, size.h) / 2 + MINDMAP_NODE_CIRCLE_MARGIN;
 }
 
 function layoutMindmapRadial(block, sizes) {
@@ -4619,9 +4638,8 @@ function layoutMindmapRadial(block, sizes) {
 
   const branches = root.children || [];
   const N = branches.length;
-  let nominalSector = 0;
   if (N > 0) {
-    nominalSector = (2 * Math.PI) / N;
+    const nominalSector = (2 * Math.PI) / N;
     const halfWidth = (nominalSector / 2) * MINDMAP_BRANCH_SECTOR_MARGIN;
     branches.forEach((branchNode, i) => {
       const branchCenter = i * nominalSector;
@@ -4640,100 +4658,21 @@ function layoutMindmapRadial(block, sizes) {
     });
   }
 
-  // edgeLength 는 가지(1단계 자식)마다 독립적으로 계산한다 — 한 가지의 자손이
-  // 아무리 촘촘해도(예: 자식 5개), 그 사정이 다른 단순한 가지(자식 없음)에까지
-  // 번져서 불필요하게 길어지면 안 되기 때문이다. 가지마다 "루트→그 가지 자신"
-  // 간선과 그 가지의 모든 후손만 훑어서(branchNode.each()) 자기 몫의 edgeLength 를
-  // 스스로 정한다 — 서로 다른 가지끼리는 완전히 독립적이다.
-  //
-  // (가지끼리 서로 다른 edgeLength 를 갖게 되면 "화살표 길이가 트리 전체에서 항상
-  // 똑같다"는 이전 턴의 성질은 "같은 가지 안에서는 항상 똑같다"로 좁혀진다 — 이번
-  // 요청 자체가 "위험 없는 가지는 짧게, 위험 있는 가지만 길게"를 요구해서 생기는
-  // 당연한 결과다. 가지들끼리는 애초에 정확히 360°/N 씩 균등하게 떨어져 있고
-  // (자손 수와 무관하게 고정) 서로 다른 반지름이어도 두 점 사이 직선거리가 여전히
-  // 넉넉해서, 가지 개수가 극단적으로 많지 않은 한 가지-가지 간 충돌은 실질적으로
-  // 걱정할 필요가 없다 — 아주 많은 가지 + 극단적인 길이 차이 조합으로 별도 검증함.)
-  const edgeLengthOfBranch = new Map();
-  branches.forEach((branchNode) => {
-    let el = MINDMAP_RADIAL_BASE_EDGE_LENGTH;
-
-    // 위험 1: 이 가지 자신(루트→가지 간선 포함)과 그 후손 사슬의 정렬 겹침.
-    // 겹침 판정에 필요한 건 "부모의 각도와 자식의 각도 차이"가 아니라 "부모→자식을
-    // 잇는 선분이 전역 좌표계에서 실제로 향하는 방향"이다 — 이 방향은 항상 자식
-    // 자신의 각도(최종 배치 때 쓰는 것과 동일)이지 부모 각도와는 무관하다(부모,
-    // 특히 루트는 "자기 고유의 방향"이라는 개념 자체가 없다).
-    branchNode.each((node) => {
-      const parentSize = sizeOf(node.parent.data.id);
-      const childSize = sizeOf(node.data.id);
-      const edgeAngle = rawAngleOf.get(node.data.id) - Math.PI / 2;
-      const needed =
-        minNonOverlapDistance(edgeAngle, parentSize.w / 2, parentSize.h / 2, childSize.w / 2, childSize.h / 2) +
-        MINDMAP_RADIAL_EDGE_MARGIN;
-      el = Math.max(el, needed);
-    });
-
-    // 위험 2: 이 가지 내부에서(자기 자신 포함) 형제끼리 부채꼴 안에 너무 촘촘함.
-    branchNode.each((node) => {
-      const kids = node.children;
-      if (!kids || kids.length < 2) return;
-      const sorted = kids.map((k) => ({ id: k.data.id, angle: rawAngleOf.get(k.data.id) })).sort((a, b) => a.angle - b.angle);
-      for (let i = 1; i < sorted.length; i++) {
-        const gap = sorted[i].angle - sorted[i - 1].angle;
-        if (!(gap > 0)) continue; // 각도가 완전히 같은 경우 방지
-        const sizeA = sizeOf(sorted[i - 1].id);
-        const sizeB = sizeOf(sorted[i].id);
-        const neededArc = sizeA.w / 2 + sizeB.w / 2 + MINDMAP_RADIAL_EDGE_MARGIN;
-        el = Math.max(el, neededArc / gap);
-      }
-    });
-
-    edgeLengthOfBranch.set(branchNode.data.id, el);
-  });
-
-  // 위험 3: 가지(1단계 노드) 그 자체끼리도 서로 안전 거리가 필요하다 — 가지끼리는
-  // 자손 수와 무관하게 항상 정확히 360°/N 만큼 떨어져 있지만, 가지가 많으면(N이
-  // 크면) 그 고정 각도 간격이 도형 크기에 비해 좁을 수 있다. 이건 "가지 내부" 문제가
-  // 아니라 서로 다른 두 가지 사이의 문제라 위 per-branch 루프(각자 자기 후손만 봄)로는
-  // 절대 못 잡는다 — 인접한 가지 쌍마다, "둘 다 같은 반지름 R을 쓴다면 안전한 최소
-  // R"을 현 위치 공식(정확한 코사인 법칙 대신, 두 가지가 원 위에서 같은 반지름일 때의
-  // 현 길이 공식 2R·sin(각도/2) 사용)으로 구해서 그 R을 두 가지 각각의 최소값으로
-  // 반영한다 — 실제로는 두 가지의 최종 edgeLength 가 서로 다를 수 있지만, 각도가
-  // 지나치게 좁지 않은 한 반지름이 클수록 서로 더 멀어지므로 "둘 다 이 최소값 이상"
-  // 이면 실제 거리도 이보다 가까워지지 않는다.
-  if (N > 1) {
-    const chordFactor = 2 * Math.sin(nominalSector / 2);
-    for (let i = 0; i < N; i++) {
-      const j = (i + 1) % N;
-      const nodeI = branches[i];
-      const nodeJ = branches[j];
-      const sizeI = sizeOf(nodeI.data.id);
-      const sizeJ = sizeOf(nodeJ.data.id);
-      const neededChord = sizeI.w / 2 + sizeJ.w / 2 + MINDMAP_RADIAL_EDGE_MARGIN;
-      const floor = chordFactor > 1e-9 ? neededChord / chordFactor : Infinity;
-      edgeLengthOfBranch.set(nodeI.data.id, Math.max(edgeLengthOfBranch.get(nodeI.data.id), floor));
-      edgeLengthOfBranch.set(nodeJ.data.id, Math.max(edgeLengthOfBranch.get(nodeJ.data.id), floor));
-    }
-  }
-
-  // 직속 부모 기준 재귀 배치: 각 노드 = 부모 위치 + edgeLength * (자기 각도 방향).
-  // 가지(1단계) 자신은 자기 몫의 edgeLength 를, 그 자손들은 자신이 속한 최상위
-  // 가지의 edgeLength 를 그대로 물려받는다(가지 내부에서는 화살표 길이가 여전히
-  // 균일하다 — 가지마다 다를 뿐). root.each() 는 항상 얕은 깊이부터(부모가 자식보다
-  // 먼저) 순회하므로, 이 한 번의 순회 안에서 부모의 위치·소속 가지가 이미 채워져
+  // 직속 부모 기준 재귀 배치: 각 노드 = 부모 위치 + (그 화살표 고유의 길이) × (자기
+  // 각도 방향). 길이는 그 화살표가 잇는 두 도형의 감싼 원 반지름 합뿐이라, 형제 수나
+  // 다른 가지의 사정은 여기에 전혀 끼어들지 않는다. root.each() 는 항상 얕은 깊이부터
+  // (부모가 자식보다 먼저) 순회하므로, 이 한 번의 순회 안에서 부모 위치가 이미 채워져
   // 있는 게 보장된다.
   const positions = new Map();
   positions.set(root.data.id, { x: 0, y: 0 });
-  const branchIdOf = new Map(); // node.id -> 그 노드가 속한 최상위 가지의 id
   root.each((node) => {
     if (node.depth === 0) return; // 루트는 이미 원점에 있다
-    const branchId = node.depth === 1 ? node.data.id : branchIdOf.get(node.parent.data.id);
-    branchIdOf.set(node.data.id, branchId);
-    const el = edgeLengthOfBranch.get(branchId);
+    const edgeLength = mindmapNodeRadius(sizeOf(node.parent.data.id)) + mindmapNodeRadius(sizeOf(node.data.id));
     const parentPos = positions.get(node.parent.data.id);
     const angle = rawAngleOf.get(node.data.id) - Math.PI / 2; // 0라디안이 12시 방향이 되도록
     positions.set(node.data.id, {
-      x: parentPos.x + el * Math.cos(angle),
-      y: parentPos.y + el * Math.sin(angle),
+      x: parentPos.x + edgeLength * Math.cos(angle),
+      y: parentPos.y + edgeLength * Math.sin(angle),
     });
   });
   return positions;
