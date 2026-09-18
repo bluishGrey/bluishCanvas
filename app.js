@@ -1592,32 +1592,57 @@ function shapeExitPoint(note, targetX, targetY) {
   return { x: note.x + local.x, y: note.y + local.y };
 }
 
-// Catmull-Rom 스플라인을 3차 베지어로 변환해서, 주어진 점들을 전부 지나는 부드러운
-// 곡선의 SVG path "d" 값을 만든다. 점이 2개(경로점 없는 보통 화살표)면 그냥 직선 —
-// 순환 관계처럼 dagre 가 우회 경로를 계산해준 화살표만 실제로 곡선이 된다.
-function smoothPathD(points) {
-  if (points.length < 2) return "";
-  if (points.length === 2) {
-    return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
+// 연속된 세 점 A-B-C 에서 A→B 방향과 B→C 방향의 각도 차이가 이 값(도) 미만이면
+// 거의 일직선이라 보고 가운데 점 B 를 버린다 — dagre 가 내놓는 경로점 중에는 실제
+// 꺾이는 지점 사이사이에 "그냥 지나가는" 점이 여러 개 섞여 있어서(예: 한 단(rank)을
+// 세로로 곧게 통과하는 구간), 그대로 다 잇는 지그재그 없이 진짜 꺾이는 지점만 남기기
+// 위한 것. 값을 키울수록 완만한 꺾임까지 뭉개지고(우회에 필요한 꺾임까지 사라질 수
+// 있음), 줄일수록 사소한 오차도 꺾임으로 남는다 — 나중에 조절할 수 있도록 상수로 뺀다.
+const ROUTE_SIMPLIFY_ANGLE_DEG = 15;
+
+// pathPoints(첫/끝은 항상 실제 도형 진입/이탈 지점, 그 사이는 dagre 경로점)에서
+// ROUTE_SIMPLIFY_ANGLE_DEG 미만으로 꺾이는 중간점을 제거한다. 양 끝 점은 도형과
+// 맞닿는 지점이라 항상 남긴다. "직전에 남기기로 한 점" 기준으로 계속 이어서 보므로,
+// 거의 일직선인 점이 여러 개 연달아 있어도 한 번에 걸러진다(A-B-C 가 걸러지면 다음은
+// A-C-D 로 비교).
+function simplifyRoutePoints(points, angleThresholdDeg = ROUTE_SIMPLIFY_ANGLE_DEG) {
+  if (points.length < 3) return points.slice();
+  const result = [points[0]];
+  for (let i = 1; i < points.length - 1; i++) {
+    const prev = result[result.length - 1];
+    const curr = points[i];
+    const next = points[i + 1];
+    const v1x = curr.x - prev.x;
+    const v1y = curr.y - prev.y;
+    const v2x = next.x - curr.x;
+    const v2y = next.y - curr.y;
+    const len1 = Math.hypot(v1x, v1y);
+    const len2 = Math.hypot(v2x, v2y);
+    if (len1 === 0 || len2 === 0) continue; // curr 이 이웃과 같은 지점 — 그냥 버린다
+    const cos = Math.max(-1, Math.min(1, (v1x * v2x + v1y * v2y) / (len1 * len2)));
+    const angleDeg = (Math.acos(cos) * 180) / Math.PI;
+    if (angleDeg >= angleThresholdDeg) result.push(curr);
   }
+  result.push(points[points.length - 1]);
+  return result;
+}
+
+// 주어진 점들을 순서대로 직선(L)으로만 이은 SVG path "d" 값 — 스플라인 보간 없는
+// 꺾은선(polyline). 화살촉(marker-end, orient="auto-start-reverse")은 각도를 이
+// 마지막 직선 구간(끝에서 두 번째 점 → 끝점)의 방향으로 브라우저가 그대로 계산해주므로
+// 별도 계산이 필요 없다 — 곡선(베지어)이었을 때와 달리 근사값이 아니라 정확히 일치한다.
+function polylinePathD(points) {
+  if (points.length < 2) return "";
   let d = `M ${points[0].x} ${points[0].y}`;
-  for (let i = 0; i < points.length - 1; i++) {
-    const p0 = points[i - 1] || points[i];
-    const p1 = points[i];
-    const p2 = points[i + 1];
-    const p3 = points[i + 2] || p2;
-    const c1x = p1.x + (p2.x - p0.x) / 6;
-    const c1y = p1.y + (p2.y - p0.y) / 6;
-    const c2x = p2.x - (p3.x - p1.x) / 6;
-    const c2y = p2.y - (p3.y - p1.y) / 6;
-    d += ` C ${c1x} ${c1y} ${c2x} ${c2y} ${p2.x} ${p2.y}`;
+  for (let i = 1; i < points.length; i++) {
+    d += ` L ${points[i].x} ${points[i].y}`;
   }
   return d;
 }
 
 // 점들을 곧게 이은 다각선을 따라 전체 길이의 t(0~1) 지점을 구한다. 라벨/삭제 버튼
-// 위치 계산용 — smoothPathD 가 만드는 실제 곡선과 완전히 같지는 않지만(곡선은 이
-// 다각선보다 살짝 안쪽으로 둥글게 휘어간다) 그 차이는 눈에 띄지 않을 만큼 작다.
+// 위치 계산용 — 화살표 자체가 polylinePathD 로 그리는 꺾은선과 정확히 같은 점 목록을
+// 넘겨 쓰므로(더 이상 곡선을 근사하는 게 아니라), 실제 렌더된 선과 완전히 일치한다.
 function pointAlongPolyline(points, t) {
   if (points.length === 1) return points[0];
   const segLengths = [];
@@ -1663,8 +1688,11 @@ function updateArrowGeometry(arrow) {
   const p2 = route
     ? shapeExitPoint(toNote, route[route.length - 1].x, route[route.length - 1].y)
     : shapeExitPoint(toNote, fromCenter.x, fromCenter.y);
-  const pathPoints = route ? [p1, ...route, p2] : [p1, p2];
-  const d = smoothPathD(pathPoints);
+  // 실제 도형 진입/이탈 지점(p1/p2)은 매번 다시 계산되므로 dagre 의 경로점과 정확히
+  // 일직선은 아닐 수 있다 — 그래서 단순화는 p1/p2 를 포함한 전체 목록에 대해 한다
+  // (양 끝 점은 simplifyRoutePoints 가 항상 그대로 남긴다).
+  const pathPoints = simplifyRoutePoints(route ? [p1, ...route, p2] : [p1, p2]);
+  const d = polylinePathD(pathPoints);
 
   ["arrow-hit", "arrow-visible"].forEach((cls) => {
     const path = g.querySelector(`.${cls}`);
