@@ -1592,8 +1592,59 @@ function shapeExitPoint(note, targetX, targetY) {
   return { x: note.x + local.x, y: note.y + local.y };
 }
 
+// Catmull-Rom 스플라인을 3차 베지어로 변환해서, 주어진 점들을 전부 지나는 부드러운
+// 곡선의 SVG path "d" 값을 만든다. 점이 2개(경로점 없는 보통 화살표)면 그냥 직선 —
+// 순환 관계처럼 dagre 가 우회 경로를 계산해준 화살표만 실제로 곡선이 된다.
+function smoothPathD(points) {
+  if (points.length < 2) return "";
+  if (points.length === 2) {
+    return `M ${points[0].x} ${points[0].y} L ${points[1].x} ${points[1].y}`;
+  }
+  let d = `M ${points[0].x} ${points[0].y}`;
+  for (let i = 0; i < points.length - 1; i++) {
+    const p0 = points[i - 1] || points[i];
+    const p1 = points[i];
+    const p2 = points[i + 1];
+    const p3 = points[i + 2] || p2;
+    const c1x = p1.x + (p2.x - p0.x) / 6;
+    const c1y = p1.y + (p2.y - p0.y) / 6;
+    const c2x = p2.x - (p3.x - p1.x) / 6;
+    const c2y = p2.y - (p3.y - p1.y) / 6;
+    d += ` C ${c1x} ${c1y} ${c2x} ${c2y} ${p2.x} ${p2.y}`;
+  }
+  return d;
+}
+
+// 점들을 곧게 이은 다각선을 따라 전체 길이의 t(0~1) 지점을 구한다. 라벨/삭제 버튼
+// 위치 계산용 — smoothPathD 가 만드는 실제 곡선과 완전히 같지는 않지만(곡선은 이
+// 다각선보다 살짝 안쪽으로 둥글게 휘어간다) 그 차이는 눈에 띄지 않을 만큼 작다.
+function pointAlongPolyline(points, t) {
+  if (points.length === 1) return points[0];
+  const segLengths = [];
+  let total = 0;
+  for (let i = 0; i < points.length - 1; i++) {
+    const len = Math.hypot(points[i + 1].x - points[i].x, points[i + 1].y - points[i].y);
+    segLengths.push(len);
+    total += len;
+  }
+  if (total === 0) return points[0];
+  let remaining = total * t;
+  for (let i = 0; i < segLengths.length; i++) {
+    if (remaining <= segLengths[i] || i === segLengths.length - 1) {
+      const ratio = segLengths[i] === 0 ? 0 : remaining / segLengths[i];
+      return {
+        x: points[i].x + (points[i + 1].x - points[i].x) * ratio,
+        y: points[i].y + (points[i + 1].y - points[i].y) * ratio,
+      };
+    }
+    remaining -= segLengths[i];
+  }
+  return points[points.length - 1];
+}
+
 // 화살표 하나의 좌표를 현재 두 메모 위치를 기준으로 다시 계산해서 반영한다.
-// (연결 지점은 저장하지 않고, 메모가 움직이거나 크기가 바뀔 때마다 항상 새로 계산한다)
+// (정확한 진입/이탈 지점은 저장하지 않고, 메모가 움직이거나 크기가 바뀔 때마다 항상
+// 새로 계산한다 — arrow.routePoints 는 그 사이를 지나는 중간 경로점만 저장한다)
 function updateArrowGeometry(arrow) {
   const g = arrowEl(arrow.id);
   if (!g) return;
@@ -1603,24 +1654,49 @@ function updateArrowGeometry(arrow) {
 
   const fromCenter = { x: fromNote.x + fromNote.w / 2, y: fromNote.y + fromNote.h / 2 };
   const toCenter = { x: toNote.x + toNote.w / 2, y: toNote.y + toNote.h / 2 };
-  const p1 = shapeExitPoint(fromNote, toCenter.x, toCenter.y);
-  const p2 = shapeExitPoint(toNote, fromCenter.x, fromCenter.y);
+
+  // routePoints 가 있으면(플로우차트 재배치/가져오기 때 dagre 가 계산해준 우회 경로 —
+  // 순환 관계 화살표가 다른 도형을 대각선으로 가로지르지 않게 해준다) 상대 도형의
+  // 중심이 아니라 그 경로의 첫/마지막 점을 향해 빠져나가게 한다.
+  const route = Array.isArray(arrow.routePoints) && arrow.routePoints.length > 0 ? arrow.routePoints : null;
+  const p1 = route ? shapeExitPoint(fromNote, route[0].x, route[0].y) : shapeExitPoint(fromNote, toCenter.x, toCenter.y);
+  const p2 = route
+    ? shapeExitPoint(toNote, route[route.length - 1].x, route[route.length - 1].y)
+    : shapeExitPoint(toNote, fromCenter.x, fromCenter.y);
+  const pathPoints = route ? [p1, ...route, p2] : [p1, p2];
+  const d = smoothPathD(pathPoints);
 
   ["arrow-hit", "arrow-visible"].forEach((cls) => {
-    const line = g.querySelector(`.${cls}`);
-    if (!line) return;
-    line.setAttribute("x1", p1.x);
-    line.setAttribute("y1", p1.y);
-    line.setAttribute("x2", p2.x);
-    line.setAttribute("y2", p2.y);
+    const path = g.querySelector(`.${cls}`);
+    if (path) path.setAttribute("d", d);
   });
 
-  updateArrowLabelPosition(arrow, g, p1, p2);
-  updateArrowDeleteButtonPosition(g, p1, p2);
+  // arrowMidpointWorld 가 <path> 에는 없는 x1/x2 속성 대신 읽어갈 수 있도록 중간점을
+  // 데이터 속성으로 같이 남겨둔다.
+  const mid = pointAlongPolyline(pathPoints, 0.5);
+  g.dataset.midX = mid.x;
+  g.dataset.midY = mid.y;
+
+  updateArrowLabelPosition(arrow, g, mid);
+  updateArrowDeleteButtonPosition(g, pointAlongPolyline(pathPoints, 0.25));
 }
 
 function updateAllArrowGeometry() {
   arrows.forEach(updateArrowGeometry);
+}
+
+// arrow.routePoints(플로우차트 재배치/가져오기 때 dagre 가 계산해준 우회 경로)는 그
+// 당시 도형 위치를 전제로 한다 — 연결된 도형을 손으로 옮기거나 크기를 바꾸면 그
+// 전제가 깨지므로, 다음 재배치 전까지는 그냥 직선으로 되돌린다. 도형 드래그/그룹
+// 이름표 드래그/모서리 리사이즈, 실제로 움직인 경우에만(클릭만 하고 끝난 경우 제외)
+// 각 onUp 에서 이 함수를 부른다.
+function clearArrowRoutesForNotes(noteIds) {
+  const idSet = new Set(noteIds);
+  arrows.forEach((arrow) => {
+    if (arrow.routePoints && (idSet.has(arrow.fromId) || idSet.has(arrow.toId))) {
+      arrow.routePoints = null;
+    }
+  });
 }
 
 // 삭제(×) 버튼을 화살표 중간 지점에서 선(수직) 방향으로 살짝 띄워서 놓는다 —
@@ -1630,18 +1706,15 @@ function updateAllArrowGeometry() {
 // 모양(회전 안 된 텍스트 알약)으로 놓인다. 그래서 "수직으로 살짝 띄우기" 방식은
 // 화살표가 세로에 가까울 때(라벨의 가로 폭이 그대로 버튼과 겹치는 방향) 겹침을
 // 못 피한다 — 각도에 관계없이 항상 안 겹치게, 라벨과 다른 지점(25%)에 둔다.
-function updateArrowDeleteButtonPosition(g, p1, p2) {
+function updateArrowDeleteButtonPosition(g, point) {
   const btn = g.querySelector(".arrow-delete-btn");
   if (!btn) return;
-  const t = 0.25;
-  const x = p1.x + (p2.x - p1.x) * t;
-  const y = p1.y + (p2.y - p1.y) * t;
-  btn.setAttribute("transform", `translate(${x}, ${y})`);
+  btn.setAttribute("transform", `translate(${point.x}, ${point.y})`);
 }
 
 // 화살표 중간 지점에 라벨(배경+텍스트)을 그린다. 라벨이 없으면 감춘다.
 // 화살표가 움직이거나 크기가 바뀔 때마다(updateArrowGeometry) 매번 다시 호출된다.
-function updateArrowLabelPosition(arrow, g, p1, p2) {
+function updateArrowLabelPosition(arrow, g, mid) {
   const text = g.querySelector(".arrow-label-text");
   const bg = g.querySelector(".arrow-label-bg");
   if (!text || !bg) return;
@@ -1654,7 +1727,6 @@ function updateArrowLabelPosition(arrow, g, p1, p2) {
     return;
   }
 
-  const mid = { x: (p1.x + p2.x) / 2, y: (p1.y + p2.y) / 2 };
   text.textContent = label;
   text.setAttribute("x", mid.x);
   text.setAttribute("y", mid.y);
@@ -1676,17 +1748,12 @@ function updateArrowLabelPosition(arrow, g, p1, p2) {
   bg.setAttribute("rx", bgHeight / 2);
 }
 
-// 화살표의 현재 중간 지점(월드 좌표)을 실제 렌더된 선 좌표에서 읽어온다.
+// 화살표의 현재 중간 지점(월드 좌표) — updateArrowGeometry 가 매번 g.dataset 에
+// 같이 남겨둔 값을 그대로 읽어온다(<path> 에는 <line> 의 x1/x2 같은 속성이 없어서).
 function arrowMidpointWorld(arrow) {
   const g = arrowEl(arrow.id);
-  if (!g) return null;
-  const line = g.querySelector(".arrow-visible");
-  if (!line) return null;
-  const x1 = parseFloat(line.getAttribute("x1"));
-  const y1 = parseFloat(line.getAttribute("y1"));
-  const x2 = parseFloat(line.getAttribute("x2"));
-  const y2 = parseFloat(line.getAttribute("y2"));
-  return { x: (x1 + x2) / 2, y: (y1 + y2) / 2 };
+  if (!g || g.dataset.midX === undefined) return null;
+  return { x: parseFloat(g.dataset.midX), y: parseFloat(g.dataset.midY) };
 }
 
 function renderArrow(arrow) {
@@ -1694,10 +1761,14 @@ function renderArrow(arrow) {
   g.setAttribute("class", "arrow");
   g.dataset.id = String(arrow.id);
 
-  const hit = document.createElementNS(SVG_NS, "line");
+  // <line> 이 아니라 <path> 를 쓴다 — routePoints(dagre 가 순환 관계 등에 계산해준
+  // 우회 경로)가 있는 화살표는 여러 점을 지나는 곡선이 되어야 해서, 두 점만 잇는
+  // <line> 으로는 표현이 안 된다. routePoints 가 없는 보통 화살표는 updateArrowGeometry
+  // 가 "M x1 y1 L x2 y2" 형태로 채우므로 <line> 이었을 때와 렌더 결과가 동일하다.
+  const hit = document.createElementNS(SVG_NS, "path");
   hit.setAttribute("class", "arrow-hit");
 
-  const visible = document.createElementNS(SVG_NS, "line");
+  const visible = document.createElementNS(SVG_NS, "path");
   visible.setAttribute("class", "arrow-visible");
   visible.setAttribute("marker-end", "url(#arrowhead)");
 
@@ -2273,6 +2344,8 @@ function initResizeHandles() {
             const n = notes.find((nn) => nn.id === sn.id);
             if (n) n.autoSize = false;
           });
+          clearArrowRoutesForNotes(startNotes.map((sn) => sn.id));
+          updateAllArrowGeometry();
           commitChange();
         }
       };
@@ -2861,7 +2934,11 @@ function renderGroups() {
         document.removeEventListener("mouseup", onUp);
         startPositions.forEach((p) => p.el && p.el.classList.remove("dragging"));
         if (moved) {
-          if (canDrag) commitChange();
+          if (canDrag) {
+            clearArrowRoutesForNotes(startPositions.map((p) => p.id));
+            updateAllArrowGeometry();
+            commitChange();
+          }
         } else {
           selectGroupMembers(group.id);
         }
@@ -3551,6 +3628,8 @@ function makeNoteInteractive(el, note, textEl) {
           addNotesToGroup(draggedIds, dropGroupBox.dataset.id);
           renderGroups();
         }
+        clearArrowRoutesForNotes(draggedIds);
+        updateAllArrowGeometry();
         commitChange();
       } else if (partOfMultiSelection) {
         // 그룹 안의 메모 하나를 그냥 클릭만 한 경우 → 그 메모 하나만 선택으로 좁힌다.
@@ -4836,6 +4915,19 @@ function computeBlockNodeSizes(block, sizeOverrideFor) {
 // 도형들이 레이아웃에서도 서로 가까이 모이게 한다. 결과는 (mermaidId -> {x, y}, dagre
 // 기준 노드 "중심" 좌표)로 돌려준다 — mindmap 은 더 이상 이 함수를 쓰지 않는다
 // (layoutMindmapRadial 참고, 아래 layoutBlock 이 타입에 따라 갈라 부른다).
+//
+// dagre 는 노드 좌표뿐 아니라 화살표(edge)마다 "경로 중간점"(points)도 함께 계산해준다
+// (dagre-d3 가 이 점들을 잇는 스플라인을 그리는 데 쓰는 바로 그 정보) — 특히 순환(cycle)
+// 관계처럼 여러 단(rank)을 거슬러 올라가는 화살표는 다른 도형들을 피해서 우회하는
+// 경로가 나온다(예: A→B→C→A 순환에서 C→A 는 B 옆을 지나 돌아가는 경로가 됨, 그냥
+// 최단 직선을 그으면 B 를 대각선으로 가로지르게 되는 것과 대조적). 그 중간점들을
+// positions 맵에 edgeRoutes(추가 프로퍼티)로 얹어서 돌려준다 — Map 인스턴스도 결국
+// 객체라 임의 프로퍼티를 더 붙일 수 있고, 이러면 이 값을 쓰는 rearrangeNotes/
+// importMermaidText 양쪽 다 기존 positions 처리 코드(boundsOfPositions 등)를 하나도
+// 안 건드리고 그대로 두면서 이 정보만 추가로 꺼내 쓸 수 있다. dagre 가 계산해준 첫/
+// 마지막 점은 노드를 "사각형"으로 가정한 경계 교차점이라 우리 도형(마름모/원 등)의
+// 실제 윤곽과는 안 맞을 수 있어 버리고, 중간(내부) 점들만 남긴다 — 실제 진입/이탈
+// 지점은 화살표를 그릴 때 shapeExitPoint 로 그때그때 도형에 맞게 다시 계산한다.
 function layoutBlockWithDagre(block, sizes) {
   const g = new dagre.graphlib.Graph({ compound: true });
   const rankdir = toDagreRankDir(block.direction);
@@ -4866,6 +4958,16 @@ function layoutBlockWithDagre(block, sizes) {
     const n = g.node(id);
     positions.set(id, { x: n.x, y: n.y });
   });
+
+  const edgeRoutes = new Map();
+  block.edges.forEach((e) => {
+    if (!block.nodes.has(e.from) || !block.nodes.has(e.to) || e.from === e.to) return;
+    const edge = g.edge(e.from, e.to);
+    const interior = edge && edge.points ? edge.points.slice(1, -1) : [];
+    if (interior.length > 0) edgeRoutes.set(`${e.from} ${e.to}`, interior);
+  });
+  positions.edgeRoutes = edgeRoutes;
+
   return positions;
 }
 
@@ -5210,12 +5312,19 @@ function importMermaidText(text) {
   });
 
   blocks.forEach((block, idx) => {
+    const edgeRoutes = blockPositions[idx].edgeRoutes;
+    const offset = blockOffsets[idx];
     block.edges.forEach((e) => {
       const fromId = idMap.get(`${idx}:${e.from}`);
       const toId = idMap.get(`${idx}:${e.to}`);
       if (fromId == null || toId == null || fromId === toId) return;
       const arrow = { id: localNextArrowId++, fromId, toId };
       if (e.label) arrow.label = e.label;
+      // 순환 관계 등 dagre 가 우회 경로를 계산해준 화살표는(layoutBlockWithDagre 참고)
+      // 가져오는 즉시 그 곡선으로 그려지게 한다 — 재배치를 한 번 더 해야만 적용되지
+      // 않도록.
+      const raw = edgeRoutes && edgeRoutes.get(`${e.from} ${e.to}`);
+      if (raw) arrow.routePoints = raw.map((pt) => ({ x: pt.x + offset.x, y: pt.y + offset.y }));
       newArrows.push(arrow);
     });
   });
@@ -5436,6 +5545,21 @@ function rearrangeNotes(targetNoteIds) {
       movedNotes.push(note);
       movedCount++;
     });
+
+    // dagre 가 이 블록의 화살표마다 계산해준 우회 경로점(layoutBlockWithDagre 참고,
+    // 마인드맵 블록은 edgeRoutes 가 없어 이 루프가 그냥 아무 것도 안 함)을 실제 화살표
+    // 객체에 옮겨 싣는다. 블록 안 화살표는 매번 여기서 다시 정하므로(있으면 새로
+    // 계산된 값으로, 없으면 null 로) 예전 재배치의 경로가 잘못 남아있는 일이 없다.
+    const edgeRoutes = positions.edgeRoutes;
+    block.edges.forEach((e) => {
+      const fm = /^N(\d+)$/.exec(e.from);
+      const tm = /^N(\d+)$/.exec(e.to);
+      if (!fm || !tm) return;
+      const arrow = findArrowBetween(Number(fm[1]), Number(tm[1]));
+      if (!arrow) return;
+      const raw = edgeRoutes && edgeRoutes.get(`${e.from} ${e.to}`);
+      arrow.routePoints = raw ? raw.map((pt) => ({ x: pt.x + offset.x, y: pt.y + offset.y })) : null;
+    });
   });
 
   renderGroups();
@@ -5517,6 +5641,16 @@ function centerContentOnView() {
     if (el) {
       el.style.left = `${note.x}px`;
       el.style.top = `${note.y}px`;
+    }
+  });
+
+  // 캔버스 전체가 통째로(모든 도형이 같은 만큼) 옮겨갈 뿐 서로의 상대 위치는 그대로라,
+  // routePoints(dagre 가 계산해준 우회 경로, 절대 월드 좌표) 도 도형처럼 같이 옮겨주면
+  // 계속 유효하다 — 손으로 낱개 도형을 옮길 때(clearArrowRoutesForNotes)와 달리
+  // 여기서는 무효화할 필요가 없다.
+  arrows.forEach((arrow) => {
+    if (Array.isArray(arrow.routePoints)) {
+      arrow.routePoints = arrow.routePoints.map((pt) => ({ x: pt.x + dx, y: pt.y + dy }));
     }
   });
 
