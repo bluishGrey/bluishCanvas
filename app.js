@@ -144,6 +144,27 @@ const SHAPE_GLYPHS = {
   "parallelogram-rev": "\\",
 };
 
+/* 마인드맵 문법으로 표현할 수 없는 도형. 마인드맵 토큰은 4가지뿐이라(사각형 []·
+ * 육각형 {{}}·둥근사각형 ()·원 (())), 단계/분기/시작·끝/준비·설정 넷은 각각 자기
+ * 토큰이 있어서 왕복해도 모양이 그대로 살아남는다. 반면 입력/출력은 대응 토큰이
+ * 아예 없어서 둘 다 그냥 사각형으로 나가고, 그러면 원래의 단계와도 구분이 안 돼
+ * 도형 정보가 실제로 사라진다. 그래서 마인드맵 타입으로는 애초에 만들지 못하게 막는다.
+ * 이 집합은 세 군데가 공유한다: 생성 차단(shapeAllowedForDiagramType), 내보내기 경고
+ * (generateMermaid), 재배치 후 실제 도형 대체(rearrangeNotes). */
+const MINDMAP_UNSUPPORTED_SHAPES = new Set(["parallelogram", "parallelogram-rev"]);
+const MINDMAP_FALLBACK_DESC = {
+  parallelogram: "사각형",
+  "parallelogram-rev": "사각형",
+};
+
+function shapeAllowedForDiagramType(shape, diagramType) {
+  return diagramType !== "mindmap" || !MINDMAP_UNSUPPORTED_SHAPES.has(shape);
+}
+
+function mindmapShapeBlockedMessage(shape) {
+  return `마인드맵에는 "${SHAPE_LABELS[shape] || shape}" 도형을 쓸 수 없습니다`;
+}
+
 // 메모 꾸미기(사이드바 "꾸미기" 패널)의 기본값. 기존 메모(이 필드들이 아직 없는 데이터)를
 // backfillNoteDefaults 로 채울 때도 이 값들을 쓰므로, 꾸미기 기능이 생기기 전 메모의
 // 겉모습은 이 상수들이 지금 CSS 기본값과 똑같은 한 그대로 유지된다.
@@ -2327,6 +2348,12 @@ function syncNoteHeightToText(note) {
 // 퀵메뉴로 "이 그룹에 메모 추가"를 골랐을 때 — 방금 태어난 메모라 보호할 기존 타입
 // 선택이 없으므로 force=true 로 그룹 타입을 그대로 물려받는다).
 function createNote(worldX, worldY, text = "", shape = nextShape, groupId = null) {
+  // 이 메모가 실제로 갖게 될 타입 — 그룹 안에서 만들면 아래 addNotesToGroup(force=true)
+  // 이 그룹 타입으로 덮어쓰므로, 차단 판정도 그 최종 타입으로 해야 한다.
+  const targetGroup = groupId ? getGroup(groupId) : null;
+  const effectiveType = targetGroup ? groupDiagramType(targetGroup) || nextDiagramType : nextDiagramType;
+  if (!shapeAllowedForDiagramType(shape, effectiveType)) return null; // 호출자가 안내를 띄운다
+
   const note = {
     id: nextId++,
     x: worldX,
@@ -2702,15 +2729,9 @@ function renderGroups() {
       label.appendChild(lockIcon);
     }
 
-    const groupType = groupDiagramType(group);
-    if (groupType) {
-      const typeIcon = document.createElement("span");
-      typeIcon.className = "group-type-icon";
-      typeIcon.textContent = groupType === "mindmap" ? "🧠" : "🔀";
-      typeIcon.title = DIAGRAM_TYPE_LABELS[groupType];
-      label.appendChild(typeIcon);
-    }
-
+    // 타입 아이콘(🔀/🧠)은 뺐다 — 이제 그룹 박스와 이름표 배경색 자체가 타입을
+    // 나타내므로 같은 정보를 두 번 보여주는 셈이었다. 타입은 여전히 박스의
+    // data-diagram-type 속성으로 CSS 에 전달된다.
     const nameEl = document.createElement("span");
     nameEl.className = "group-name";
     nameEl.textContent = group.name;
@@ -3154,6 +3175,10 @@ function renderNote(note) {
   el.className = "note";
   el.dataset.id = String(note.id);
   el.dataset.shape = note.shape || DEFAULT_SHAPE;
+  // 그룹 소속 여부는 CSS 가 바로 읽는다(미소속 도형은 타입 색으로 속을 채운다).
+  // 여기서 먼저 채워두지 않으면 renderGroups() 가 한 번 돌기 전까지 속성이 아예 없어서,
+  // 방금 만든 도형만 새로고침 전까지 색이 안 칠해진 채로 남는다.
+  el.dataset.grouped = groupOfNote(note.id) ? "true" : "false";
   el.style.left = `${note.x}px`;
   el.style.top = `${note.y}px`;
   el.style.width = `${note.w}px`;
@@ -3391,24 +3416,46 @@ function makeNoteInteractive(el, note, textEl) {
 
 /* ===== 도형 선택(다음 생성 도형) & 빈 곳 우클릭 퀵메뉴 ===== */
 
+// 지금 타입에서 쓸 수 없는 도형이면 바꾸지 않고 false 를 돌려준다 — 안내 문구를 어디에
+// 띄울지는 호출한 쪽(클릭한 버튼 옆 / 커서 옆)이 더 잘 알기 때문에 여기서 띄우지 않는다.
 function setNextShape(shape) {
-  if (!SHAPE_LABELS[shape]) return; // 알려진 도형인지 확인하는 용도로만 SHAPE_LABELS 를 쓴다
+  if (!SHAPE_LABELS[shape]) return false; // 알려진 도형인지 확인하는 용도로만 SHAPE_LABELS 를 쓴다
+  if (!shapeAllowedForDiagramType(shape, nextDiagramType)) return false;
   nextShape = shape;
   updateShapeUIHighlight();
+  return true;
 }
 
 // 도형 선택 상태를 보여주는 두 곳(퀵메뉴, 툴바의 미니 팔레트)을 한꺼번에 갱신한다.
+// 지금 타입에서 못 쓰는 도형은 툴바에선 흐리게+비활성, 퀵메뉴에선 아예 숨긴다 —
+// 툴바 팔레트는 자리가 고정돼 있어서 숨기면 나머지 아이콘이 들썩이고, 퀵메뉴는 열릴
+// 때마다 새로 그려지는 목록이라 숨겨도 흔들릴 자리가 없다.
 function updateShapeUIHighlight() {
   quickMenuEl.querySelectorAll(".shape-item").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.shape === nextShape);
+    const allowed = shapeAllowedForDiagramType(btn.dataset.shape, nextDiagramType);
+    btn.hidden = !allowed;
+    btn.classList.toggle("active", allowed && btn.dataset.shape === nextShape);
   });
   document.querySelectorAll(".shape-palette-btn").forEach((btn) => {
-    btn.classList.toggle("active", btn.dataset.shape === nextShape);
+    const allowed = shapeAllowedForDiagramType(btn.dataset.shape, nextDiagramType);
+    // disabled 를 쓰면 클릭 이벤트 자체가 안 와서 "왜 안 되는지" 알려줄 기회가 없다.
+    // 그래서 보기엔 비활성(흐리게)이지만 클릭은 받아서, 누르면 이유를 알려준다.
+    btn.setAttribute("aria-disabled", allowed ? "false" : "true");
+    btn.classList.toggle("unavailable", !allowed);
+    btn.classList.toggle("active", allowed && btn.dataset.shape === nextShape);
+    if (!allowed) {
+      btn.title = mindmapShapeBlockedMessage(btn.dataset.shape);
+    } else {
+      btn.title = `${SHAPE_LABELS[btn.dataset.shape]} (${SHAPE_ORDER.indexOf(btn.dataset.shape) + 1})`;
+    }
   });
 }
 
 document.querySelectorAll(".shape-palette-btn").forEach((btn) => {
-  btn.addEventListener("click", () => setNextShape(btn.dataset.shape));
+  btn.addEventListener("click", (e) => {
+    if (setNextShape(btn.dataset.shape)) return;
+    showCanvasNotice(e.clientX, e.clientY, mindmapShapeBlockedMessage(btn.dataset.shape));
+  });
 });
 
 /* ===== 다음 생성 다이어그램 타입 (툴바 토글 / Tab) ===== */
@@ -3416,11 +3463,20 @@ document.querySelectorAll(".shape-palette-btn").forEach((btn) => {
 function setNextDiagramType(type) {
   if (!DIAGRAM_TYPE_LABELS[type]) return;
   nextDiagramType = type;
+  // 마인드맵으로 바꿨는데 지금 고른 도형이 마인드맵에 없는 것(입력/출력)이면, 그대로
+  // 두면 "다음에 만들 도형"이 만들 수 없는 조합으로 남는다. 조용히 기본 도형으로 돌린다.
+  if (!shapeAllowedForDiagramType(nextShape, nextDiagramType)) {
+    nextShape = DEFAULT_SHAPE;
+  }
   updateDiagramTypeHighlight();
+  updateShapeUIHighlight(); // 타입이 바뀌면 쓸 수 있는 도형 목록도 같이 바뀐다
 }
 
 function updateDiagramTypeHighlight() {
   document.querySelectorAll(".diagram-type-btn").forEach((btn) => {
+    btn.classList.toggle("active", btn.dataset.diagramType === nextDiagramType);
+  });
+  quickMenuEl.querySelectorAll(".quick-diagram-type-item").forEach((btn) => {
     btn.classList.toggle("active", btn.dataset.diagramType === nextDiagramType);
   });
 }
@@ -3455,6 +3511,7 @@ function openQuickMenu(clientX, clientY, worldPos, groupId = null) {
   quickMenuWorldPos = worldPos;
   quickMenuGroupId = groupId;
   updateShapeUIHighlight();
+  updateDiagramTypeHighlight();
 
   if (quickMenuGroupId) {
     const group = getGroup(quickMenuGroupId);
@@ -3487,7 +3544,16 @@ quickMenuEl.addEventListener("click", (e) => {
   if (btn.dataset.action === "create" && quickMenuWorldPos) {
     const p = quickMenuWorldPos;
     const el = createNote(p.x - DEFAULT_NOTE_W / 2, p.y - DEFAULT_NOTE_H / 2, "", nextShape, quickMenuGroupId);
+    if (!el) {
+      // 마인드맵 그룹 안에서 열린 퀵메뉴라면, 지금 고른 도형이 그 그룹 타입에선 못 쓰는
+      // 것일 수 있다(툴바 타입은 플로우차트인데 그룹은 마인드맵인 경우).
+      showCanvasNotice(e.clientX, e.clientY, mindmapShapeBlockedMessage(nextShape));
+      closeQuickMenu();
+      return;
+    }
     el.querySelector(".note-text").focus();
+  } else if (btn.dataset.diagramType) {
+    setNextDiagramType(btn.dataset.diagramType);
   } else if (btn.dataset.action === "select-all") {
     selectAllNotes();
   } else if (btn.dataset.action === "lasso") {
@@ -3711,6 +3777,10 @@ canvas.addEventListener("click", (e) => {
 canvas.addEventListener("dblclick", (e) => {
   const p = screenToWorld(e.clientX, e.clientY);
   const el = createNote(p.x - DEFAULT_NOTE_W / 2, p.y - DEFAULT_NOTE_H / 2);
+  if (!el) {
+    showCanvasNotice(e.clientX, e.clientY, mindmapShapeBlockedMessage(nextShape));
+    return;
+  }
   el.querySelector(".note-text").focus();
 });
 
@@ -3847,7 +3917,12 @@ document.addEventListener("keydown", (e) => {
     return;
   }
 
-  setNextShape(SHAPE_ORDER[Number(key) - 1]);
+  const shape = SHAPE_ORDER[Number(key) - 1];
+  if (setNextShape(shape)) return;
+  // 키보드라 커서 위치를 모르니, 도형 팔레트 바로 아래에 안내를 띄운다.
+  const palette = document.getElementById("shape-palette");
+  const rect = palette ? palette.getBoundingClientRect() : { left: 16, bottom: 16 };
+  showCanvasNotice(rect.left, rect.bottom, mindmapShapeBlockedMessage(shape));
 });
 
 /* ===== Mermaid 내보내기 =====
@@ -3911,20 +3986,10 @@ function flowchartNodeLine(note) {
 }
 
 // 마인드맵 문법은 4가지 도형 토큰을 구분한다: 사각형([])·육각형({{}})·둥근사각형(())·
-// 원((())). 분기는 둥근사각형, 시작/끝은 원으로 대응시켜서(mindmapNodeLine 참고)
+// 원((())). 분기는 둥근사각형, 시작/끝은 원으로 대응시켜서(아래 mindmapNodeLine 참고)
 // parseMindmapNodeToken 이 다시 정확히 그 도형으로 되돌리므로, 이 넷은 마인드맵을
-// 왕복해도 도형 정보가 안 사라진다(문법만 flowchart 때와 다를 뿐). 입력/출력만은
-// 구분되는 마인드맵 토큰이 아예 없어서 — 대응시킬 게 없어 둘 다 그냥 사각형([])으로
-// 나가고, 그러면 원래의 단계(rect)와도 구분이 안 돼 도형 정보가 실제로 사라진다.
-// 그래서 "마인드맵에 없는 도형"은 이 둘뿐이고, 이 집합은 두 군데서 같이 쓴다:
-// generateMermaid() 의 경고 문구(도형 하나하나가 아니라 한 번에 모아서 알려줌)와
-// rearrangeNotes() 가 재배치 후 실제 도형을 무엇으로 바꿀지 판단할 때.
-const MINDMAP_UNSUPPORTED_SHAPES = new Set(["parallelogram", "parallelogram-rev"]);
-const MINDMAP_FALLBACK_DESC = {
-  parallelogram: "사각형",
-  "parallelogram-rev": "사각형",
-};
-
+// 왕복해도 도형 정보가 안 사라진다(문법만 flowchart 때와 다를 뿐). 입력/출력이 왜
+// 빠지는지는 위쪽 MINDMAP_UNSUPPORTED_SHAPES 주석 참고.
 function mindmapNodeLine(note) {
   const label = sanitizeMindmapLabel(note.text);
   const id = mermaidNodeId(note.id);
@@ -5518,4 +5583,8 @@ historyIndex = 0;
 renderSidebar();
 updateBackupInfoDisplay();
 updateStylePanel();
+// 도형/타입 팔레트의 선택 표시와 "이 타입에서 쓸 수 있는 도형" 상태를 처음부터 맞춰둔다
+// (전엔 사용자가 한 번 누르기 전까지 아무 표시도 없었다).
+updateShapeUIHighlight();
+updateDiagramTypeHighlight();
 save();

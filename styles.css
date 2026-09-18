@@ -198,13 +198,6 @@ body {
   line-height: 1;
 }
 
-/* 플로우차트(🔀)/마인드맵(🧠) 구분 아이콘. 이름표 모양(각진/둥근)은 그대로 두고
-   추가로 얹는 것이라, 별도 색/모양 규칙 없이 label 의 flex 배치에 자연스럽게 낀다. */
-.group-type-icon {
-  font-size: 10px;
-  line-height: 1;
-}
-
 /* 다른 도형을 드래그해서 이 그룹 이름표 위로 가져왔을 때("여기 놓으면 이 그룹에
    들어감") 표시. 이름표 자체가 이미 진한 색이라 흰색 점선 + 살짝 커지는 것으로
    눈에 띄게 대비를 준다(드래그 중엔 시선이 옮기는 도형에 있어서, 옅은 표시는
@@ -830,12 +823,15 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* 버튼은 글자색을 상속하지 않고 브라우저 기본값(검정)을 쓰므로, 다크 모드에서 검은
+   글자로 남지 않도록 여기서 명시적으로 지정해야 한다. */
 #reset-view {
   border: 1px solid var(--note-border);
   background: var(--surface);
   border-radius: 6px;
   padding: 4px 10px;
   font-size: 13px;
+  color: var(--text);
   cursor: pointer;
 }
 
@@ -851,6 +847,7 @@ body {
   padding: 3px 8px;
   font-size: 13px;
   line-height: 1.4;
+  color: var(--text);
   cursor: pointer;
 }
 
@@ -858,7 +855,15 @@ body {
   border-color: var(--accent);
 }
 
-#lasso-btn {
+/* 툴바의 동작 버튼들 — 올가미 / Mermaid 내보내기·가져오기 / 재배치 / 가운데로.
+   전부 같은 생김새여야 해서 규칙 하나를 공유한다(예전엔 같은 내용을 버튼마다 복사해
+   두고 있었는데, 그러다 보니 새 버튼을 추가했을 때 이 목록에 넣는 걸 잊어서 그 버튼만
+   브라우저 기본 모양으로 남는 일이 생겼다). */
+#lasso-btn,
+#mermaid-btn,
+#mermaid-import-btn,
+#rearrange-btn,
+#center-view-btn {
   border: 1px solid var(--note-border);
   background: var(--surface);
   border-radius: 6px;
@@ -869,7 +874,11 @@ body {
   cursor: pointer;
 }
 
-#lasso-btn:hover {
+#lasso-btn:hover,
+#mermaid-btn:hover,
+#mermaid-import-btn:hover,
+#rearrange-btn:hover,
+#center-view-btn:hover {
   border-color: var(--accent);
   color: var(--accent);
 }
@@ -878,54 +887,6 @@ body {
   background: var(--accent);
   border-color: var(--accent);
   color: #fff;
-}
-
-#mermaid-btn {
-  border: 1px solid var(--note-border);
-  background: var(--surface);
-  border-radius: 6px;
-  padding: 4px 8px;
-  font: inherit;
-  font-size: 11.5px;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-#mermaid-btn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-#mermaid-import-btn {
-  border: 1px solid var(--note-border);
-  background: var(--surface);
-  border-radius: 6px;
-  padding: 4px 8px;
-  font: inherit;
-  font-size: 11.5px;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-#mermaid-import-btn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
-}
-
-#rearrange-btn {
-  border: 1px solid var(--note-border);
-  background: var(--surface);
-  border-radius: 6px;
-  padding: 4px 8px;
-  font: inherit;
-  font-size: 11.5px;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-#rearrange-btn:hover {
-  border-color: var(--accent);
-  color: var(--accent);
 }
 
 /* ===== Mermaid 내보내기 팝업 ===== */
@@ -1116,6 +1077,13 @@ body {
   color: var(--text-muted);
   cursor: pointer;
   padding: 0;
+}
+
+/* 지금 다이어그램 타입(마인드맵)에선 쓸 수 없는 도형. 팔레트는 자리가 고정돼 있어서
+   숨기면 나머지 아이콘이 들썩이므로, 자리는 그대로 두고 흐리게만 처리한다. */
+.shape-palette-btn.unavailable {
+  opacity: 0.32;
+  cursor: not-allowed;
 }
 
 .shape-palette-btn:hover {
@@ -1372,6 +1340,12 @@ body {
   font-family: inherit;
   color: var(--text);
   cursor: pointer;
+}
+
+/* 위의 display:block 이 브라우저 기본 [hidden] 규칙을 이겨버리므로, 숨김을 명시적으로
+   다시 지정해야 한다 — 마인드맵일 때 못 쓰는 도형 항목을 app.js 가 hidden 으로 감춘다. */
+.quick-menu-item[hidden] {
+  display: none;
 }
 
 .quick-menu-item:hover {
