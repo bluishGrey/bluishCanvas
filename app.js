@@ -25,6 +25,8 @@ const sidebarEl = document.getElementById("sidebar");
 const pageTreeEl = document.getElementById("page-tree");
 const addPageBtn = document.getElementById("add-page-btn");
 const addFolderBtn = document.getElementById("add-folder-btn");
+const themeToggleBtn = document.getElementById("theme-toggle-btn");
+const centerViewBtn = document.getElementById("center-view-btn");
 const sidebarToggleBtn = document.getElementById("sidebar-toggle-btn");
 const sidebarOpenBtn = document.getElementById("sidebar-open-btn");
 const exportBtn = document.getElementById("export-btn");
@@ -68,6 +70,51 @@ const SVG_NS = "http://www.w3.org/2000/svg";
 
 const STORAGE_KEY = "bluishCanvas.v2";
 const LEGACY_STORAGE_KEY = "bluishCanvas.v1"; // 페이지/폴더 기능 이전의 단일 캔버스 저장 형식
+
+/* ===== 라이트/다크 테마 =====
+ * 색은 styles.css 의 토큰 한 곳에서만 정의하고, 여기서는 :root 에 data-theme="dark" 를
+ * 붙였다 떼는 것만 한다. 저장은 페이지 데이터(STORAGE_KEY)가 아니라 별도 키에 둔다 —
+ * 테마는 "이 브라우저에서 보는 방식"이지 문서 내용이 아니라서, 내보내기/가져오기로
+ * 옮겨다니면 오히려 남의 취향이 덮어써진다. */
+const THEME_STORAGE_KEY = "bluishCanvas.theme";
+let currentTheme = "light";
+
+function applyTheme(theme) {
+  currentTheme = theme === "dark" ? "dark" : "light";
+  if (currentTheme === "dark") {
+    document.documentElement.dataset.theme = "dark";
+  } else {
+    delete document.documentElement.dataset.theme;
+  }
+  if (themeToggleBtn) {
+    // 버튼은 "지금 무엇인지"가 아니라 "누르면 무엇이 되는지"를 보여준다.
+    themeToggleBtn.textContent = currentTheme === "dark" ? "☀" : "◐";
+    themeToggleBtn.title = currentTheme === "dark" ? "라이트 모드로 전환" : "다크 모드로 전환";
+  }
+}
+
+function loadTheme() {
+  let saved = null;
+  try {
+    saved = localStorage.getItem(THEME_STORAGE_KEY);
+  } catch (e) {
+    saved = null; // 사생활 보호 모드 등에서 localStorage 자체가 막혀 있을 수 있다
+  }
+  applyTheme(saved === "dark" ? "dark" : "light");
+}
+
+if (themeToggleBtn) {
+  themeToggleBtn.addEventListener("click", () => {
+    applyTheme(currentTheme === "dark" ? "light" : "dark");
+    try {
+      localStorage.setItem(THEME_STORAGE_KEY, currentTheme);
+    } catch (e) {
+      /* 저장만 실패한 것이라 이번 세션 동안은 그대로 쓰면 된다 */
+    }
+  });
+}
+
+loadTheme();
 const MIN_SCALE = 0.2;
 const MAX_SCALE = 4;
 const MAX_HISTORY = 50;
@@ -1028,6 +1075,25 @@ document.addEventListener("keydown", (e) => {
 
   e.preventDefault(); // 일부 브라우저의 기본 Ctrl+B(북마크바 토글 등) 동작 방지
   toggleSidebar();
+});
+
+// Ctrl+A — 현재 페이지의 도형 전체 선택(빈 곳 우클릭 메뉴의 "전체 선택"과 같은 동작).
+// 텍스트 편집 중일 땐 브라우저 기본 "글자 전체 선택"을 그대로 쓰게 둔다.
+document.addEventListener("keydown", (e) => {
+  if (!(e.ctrlKey || e.metaKey) || e.key.toLowerCase() !== "a") return;
+
+  const active = document.activeElement;
+  if (
+    active &&
+    (active.isContentEditable ||
+      active.tagName === "INPUT" ||
+      active.tagName === "TEXTAREA")
+  ) {
+    return;
+  }
+
+  e.preventDefault(); // 캔버스/사이드바 전체가 드래그 선택되는 기본 동작 방지
+  selectAllNotes();
 });
 
 /* ===== 전체 내보내기 / 가져오기 (JSON 백업) ===== */
@@ -2763,6 +2829,14 @@ function selectGroupMembers(groupId) {
   setSelection(group.noteIds.slice());
 }
 
+// 현재 페이지의 도형 전부를 선택한다 (빈 곳 우클릭 메뉴 / Ctrl+A). 화살표는 넣지
+// 않는다 — 도형 선택과 화살표 선택은 원래 서로를 지우는 별개의 선택이고, "전체 선택"
+// 후 바로 이어질 동작(다같이 옮기기·지우기·타입 바꾸기)은 전부 도형 기준이다.
+function selectAllNotes() {
+  deselectAllArrows();
+  setSelection(notes.map((n) => n.id));
+}
+
 // 그룹의 도형+화살표(그룹 안에서 양 끝이 다 그 그룹 멤버인 것만)+상대 위치를 그대로
 // 복사해서 원본 오른쪽에 새로 놓는다. 새 도형/화살표/그룹은 전부 새 id 를 받는 별개의
 // 그룹이다.
@@ -3097,14 +3171,6 @@ function renderNote(note) {
   shapeEl.className = "note-shape";
   el.appendChild(shapeEl);
 
-  // 그룹에 속하지 않은 도형에만 CSS(.note[data-grouped="false"] .note-type-badge)로
-  // 보이는 작은 용도 라벨(단계/분기/시작·끝/준비·설정/입력/출력) — 그룹 소속 도형은
-  // 그룹 이름표의 타입 배지로 이미 알 수 있어서 굳이 안 띄운다.
-  const typeBadgeEl = document.createElement("div");
-  typeBadgeEl.className = "note-type-badge";
-  typeBadgeEl.textContent = SHAPE_LABELS[note.shape] || "";
-  el.appendChild(typeBadgeEl);
-
   const textEl = document.createElement("div");
   textEl.className = "note-text";
   textEl.contentEditable = "true";
@@ -3422,6 +3488,8 @@ quickMenuEl.addEventListener("click", (e) => {
     const p = quickMenuWorldPos;
     const el = createNote(p.x - DEFAULT_NOTE_W / 2, p.y - DEFAULT_NOTE_H / 2, "", nextShape, quickMenuGroupId);
     el.querySelector(".note-text").focus();
+  } else if (btn.dataset.action === "select-all") {
+    selectAllNotes();
   } else if (btn.dataset.action === "lasso") {
     setLassoMode(true);
   } else if (btn.dataset.shape) {
@@ -4746,7 +4814,6 @@ function boundsOfPositions(positions, sizes) {
 }
 
 const MERMAID_IMPORT_BLOCK_GAP = 100;
-const MERMAID_IMPORT_ROW_MAX_WIDTH = 1600;
 const MERMAID_IMPORT_EXISTING_GAP = 140; // 기존 캔버스 내용과 새로 가져온 내용 사이 간격
 
 // 현재 페이지에 이미 있는 모든 도형을 감싸는 경계 상자. 하나도 없으면 null —
@@ -4763,34 +4830,30 @@ function existingNotesBounds() {
   return { minX, minY, maxX, maxY };
 }
 
-// 블록마다 이미 계산된(dagre) 상대 좌표들을, 서로 겹치지 않도록 줄줄이 늘어놓는다(왼쪽→
-// 오른쪽, 폭이 넘치면 다음 줄로) — "최종적으로 어디에 놓을지"는 이 함수의 책임이 아니다.
-// 호출자가 blockOffsets(블록별 상대 오프셋)와 overallBounds(전체 묶음의 (0,0) 기준
-// 경계 상자)를 받아서 마지막 한 번의 평행이동만 더 하면 된다 — placeBlocksOnCanvas
-// (기존 도형과 안 겹치는 자리)와 placeBlocksAtCenter(재배치: 특정 중심점에 맞추기)가
-// 이 패킹 로직 하나를 공유한다.
+// 블록(그룹)마다 이미 계산된 상대 좌표들을, 서로 겹치지 않도록 왼쪽→오른쪽으로 한 줄에
+// 죽 늘어놓는다 — "최종적으로 어디에 놓을지"는 이 함수의 책임이 아니다. 호출자가
+// blockOffsets(블록별 상대 오프셋)와 overallBounds(전체 묶음의 (0,0) 기준 경계 상자)를
+// 받아서 마지막 한 번의 평행이동만 더 하면 된다 — placeBlocksOnCanvas(기존 도형과 안
+// 겹치는 자리)와 placeBlocksAtCenter(재배치: 특정 중심점에 맞추기)가 이 패킹 로직
+// 하나를 공유한다.
+//
+// 예전엔 일정 폭을 넘으면 다음 줄로 넘겼는데, 마인드맵 그룹 하나가 그 폭을 혼자 넘기기
+// 일쑤라 결국 "한 줄에 그룹 하나"= 세로로 길게 쌓이는 모양이 됐다. 그래서 줄바꿈을 아예
+// 없애고 항상 가로로만 나열한다. 세로 정렬은 위쪽 맞춤이 아니라 가운데 맞춤이다 —
+// 높이가 제각각인 그룹들을 한 줄에 놓을 땐 가운데가 맞아야 한 덩어리로 보인다.
 function packBlocksLocally(blocks, blockPositions, blockSizes) {
   let cursorX = 0;
-  let cursorY = 0;
-  let rowHeight = 0;
   const blockOffsets = [];
 
   blocks.forEach((block, idx) => {
     const bounds = boundsOfPositions(blockPositions[idx], blockSizes[idx]);
     const width = bounds.maxX - bounds.minX;
-    const height = bounds.maxY - bounds.minY;
+    const centerY = (bounds.minY + bounds.maxY) / 2;
 
-    if (cursorX > 0 && cursorX + width > MERMAID_IMPORT_ROW_MAX_WIDTH) {
-      cursorX = 0;
-      cursorY += rowHeight + MERMAID_IMPORT_BLOCK_GAP;
-      rowHeight = 0;
-    }
-
-    // dagre 좌표의 bounds.min* 을 이 줄의 cursorX/Y 에 맞춰 평행이동하는 오프셋.
-    blockOffsets.push({ x: cursorX - bounds.minX, y: cursorY - bounds.minY });
+    // 가로는 이 블록의 왼쪽 끝을 cursorX 에, 세로는 이 블록의 한가운데를 0 에 맞춘다.
+    blockOffsets.push({ x: cursorX - bounds.minX, y: -centerY });
 
     cursorX += width + MERMAID_IMPORT_BLOCK_GAP;
-    rowHeight = Math.max(rowHeight, height);
   });
 
   let overallMinX = Infinity, overallMinY = Infinity, overallMaxX = -Infinity, overallMaxY = -Infinity;
@@ -5114,11 +5177,7 @@ function rearrangeNotes(targetNoteIds) {
       // 상태가 안 생긴다(요청: 실제로 표시되는 도형에도 대체가 적용되게).
       if (info.shape && info.shape !== note.shape) {
         note.shape = info.shape;
-        if (el) {
-          el.dataset.shape = note.shape;
-          const badge = el.querySelector(".note-type-badge");
-          if (badge) badge.textContent = SHAPE_LABELS[note.shape] || "";
-        }
+        if (el) el.dataset.shape = note.shape;
         if (note.autoSize !== false) syncNoteHeightToText(note); // 도형이 바뀌면 인셋 비율도 달라지니 다시 맞춘다
       }
       if (el) {
@@ -5157,6 +5216,74 @@ rearrangeBtn.addEventListener("click", () => {
     alert(`일부 도형은 제외되고 나머지만 재배치했습니다.\n\n${result.warnings.join("\n")}`);
   }
 });
+
+/* ===== 가운데로: 전체를 화면 한가운데로 옮기기 =====
+ * 재배치(⇄)와는 완전히 다른 기능이다 — 재배치는 그룹 안/그룹 사이 배치를 다시 계산하지만,
+ * 이건 이미 정해진 배치는 손끝 하나 안 대고 전부 같은 만큼 평행이동만 시킨다.
+ * 기준점은 "그룹들이 퍼져 있는 범위의 한가운데"다(그룹이 하나도 없으면 도형 전체 기준).
+ * 옮기는 대상은 그룹 소속 여부와 무관하게 이 페이지의 모든 도형이라, 서로의 상대 위치는
+ * 완벽히 그대로 유지된다. */
+function groupsDistributionCenter() {
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  let counted = 0;
+  groups.forEach((group) => {
+    group.noteIds.forEach((id) => {
+      const n = getNote(id);
+      if (!n) return;
+      counted++;
+      minX = Math.min(minX, n.x);
+      minY = Math.min(minY, n.y);
+      maxX = Math.max(maxX, n.x + n.w);
+      maxY = Math.max(maxY, n.y + n.h);
+    });
+  });
+
+  // 그룹이 하나도 없으면(또는 멤버가 전부 사라진 상태면) 도형 전체를 기준으로 삼는다 —
+  // "가운데로"가 아무 일도 안 하는 것보다는 낱개 도형이라도 가운데로 모으는 게 낫다.
+  if (counted === 0) {
+    const bounds = existingNotesBounds();
+    if (!bounds) return null;
+    return { x: (bounds.minX + bounds.maxX) / 2, y: (bounds.minY + bounds.maxY) / 2 };
+  }
+  return { x: (minX + maxX) / 2, y: (minY + maxY) / 2 };
+}
+
+function centerContentOnView() {
+  const center = groupsDistributionCenter();
+  if (!center) return { ok: false, reason: "옮길 도형이 없습니다." };
+
+  // 지금 화면 한가운데가 월드 좌표로 어디인지. 캔버스가 사이드바만큼 오른쪽으로
+  // 밀려 있으므로 뷰포트가 아니라 캔버스 자체의 가운데를 기준으로 삼아야 한다.
+  const rect = canvas.getBoundingClientRect();
+  const viewCenter = screenToWorld(rect.left + rect.width / 2, rect.top + rect.height / 2);
+
+  const dx = viewCenter.x - center.x;
+  const dy = viewCenter.y - center.y;
+  if (Math.abs(dx) < 0.01 && Math.abs(dy) < 0.01) return { ok: true, moved: 0 };
+
+  notes.forEach((note) => {
+    note.x += dx;
+    note.y += dy;
+    const el = noteEl(note.id);
+    if (el) {
+      el.style.left = `${note.x}px`;
+      el.style.top = `${note.y}px`;
+    }
+  });
+
+  renderGroups();
+  updateAllArrowGeometry();
+  updateHandles();
+  commitChange();
+  return { ok: true, moved: notes.length };
+}
+
+if (centerViewBtn) {
+  centerViewBtn.addEventListener("click", () => {
+    const result = centerContentOnView();
+    if (!result.ok) alert(result.reason);
+  });
+}
 
 /* ----- Mermaid 가져오기 팝업 UI ----- */
 
