@@ -3838,6 +3838,16 @@ function mindmapNodeLine(note) {
   }
 }
 
+// 도형을 사람이 읽을 오류 메시지에 쓸 때, 같은 텍스트를 가진 다른 도형과 헷갈리지
+// 않도록 항상 id(#숫자)를 같이 붙인다 — 텍스트만으로는 "이름이 같은 여러 도형 중
+// 정확히 어떤 도형"인지 구분할 방법이 없다(도형의 정체성은 항상 note.id 이지 텍스트가
+// 아니다 — buildMindmapTree 의 실제 부모/자식 판정도 처음부터 note.id 로만 한다).
+function describeNoteForError(id) {
+  const note = getNote(id);
+  const label = (note && note.text || "").trim();
+  return `"${label || "이름 없음"}"(#${id})`;
+}
+
 // 마인드맵 그룹의 화살표들로 트리를 만든다. 트리가 아니면 why 에 이유를 담아 돌려준다.
 function buildMindmapTree(group, groupArrows) {
   const memberIds = group.noteIds.filter((id) => getNote(id));
@@ -3847,8 +3857,13 @@ function buildMindmapTree(group, groupArrows) {
 
   for (const arrow of groupArrows) {
     if (parentOf.has(arrow.toId)) {
-      const note = getNote(arrow.toId);
-      return { error: `"${(note && note.text) || arrow.toId}" 도형으로 화살표가 두 개 이상 들어옵니다. 마인드맵은 부모가 하나뿐인 트리여야 합니다.` };
+      // 판정 자체는 항상 arrow.toId(실제 도형 id)로 하지, 텍스트로는 절대 하지 않는다 —
+      // 텍스트가 같은 서로 다른 도형 여러 개가 있어도 각자 고유 id로 정확히 구분된다.
+      // 다만 메시지에 어느 두 도형에서 들어왔는지까지 알려줘야, 이름이 같은 도형이
+      // 여럿일 때 사용자가 실제로 화살표를 두 개 그은 그 도형을 찾아 고칠 수 있다.
+      return {
+        error: `${describeNoteForError(arrow.toId)} 도형으로 화살표가 두 개 이상 들어옵니다 — ${describeNoteForError(parentOf.get(arrow.toId))}와(과) ${describeNoteForError(arrow.fromId)} 양쪽에서 연결돼 있습니다. 마인드맵은 부모가 하나뿐인 트리여야 합니다.`,
+      };
     }
     parentOf.set(arrow.toId, arrow.fromId);
     childrenOf.get(arrow.fromId).push(arrow.toId);
@@ -3859,7 +3874,7 @@ function buildMindmapTree(group, groupArrows) {
     return { error: "화살표가 순환하고 있어 시작점(중심)을 찾을 수 없습니다." };
   }
   if (roots.length > 1) {
-    const names = roots.map((id) => `"${(getNote(id).text || "").trim() || id}"`).join(", ");
+    const names = roots.map(describeNoteForError).join(", ");
     return { error: `중심이 될 수 있는 도형이 여러 개입니다(${names}). 마인드맵은 하나의 중심에서 뻗어나가야 합니다 — 화살표로 이어주세요.` };
   }
 
@@ -5041,6 +5056,16 @@ function rearrangeNotes(targetNoteIds) {
     notes = realNotes;
     arrows = realArrows;
     groups = realGroups;
+  }
+
+  // generateMermaid() 가 애초에 블록을 하나도 못 만들었으면(예: 마인드맵 그룹이
+  // 트리가 아니라서 실패) combinedText 는 반드시 빈 문자열이고, 그걸 다시 파싱하면
+  // "블록을 찾지 못했습니다"라는 것 자체를 알리는 것과 다름없는, 완전히 무관하고
+  // 혼란만 주는 별개의 에러가 하나 더 붙는다("근본 원인 + 그 결과로 당연히 벌어진
+  // 부수 현상"이 마치 서로 다른 두 문제처럼 나열됨). mermaid.warnings 가 이미 정확한
+  // 원인을 담고 있으니, 이 경우엔 재파싱을 아예 시도하지 않고 그 원인만 그대로 돌려준다.
+  if (mermaid.blocks.length === 0) {
+    return { ok: false, warnings: mermaid.warnings.length > 0 ? mermaid.warnings : ["재배치할 수 있는 도형이 없습니다."] };
   }
 
   const combinedText = mermaid.blocks.map((b) => b.text).join("\n\n");
