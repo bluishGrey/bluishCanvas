@@ -4600,10 +4600,14 @@ function layoutBlockWithDagre(block, sizes) {
  * 무관한 사정이 중심→가지 같은 전혀 다른 화살표까지 같이 밀어 올리는 부작용이 있었다.
  * 지금은 그런 전파 경로 자체가 구조적으로 존재하지 않는다.
  *
- * 대신 이 규칙은 부모-자식만 보장한다 — 형제끼리(부모에서 같은 거리, 각도만 다른
- * 도형들)의 겹침은 길이가 아니라 각도 문제라 여기서 풀지 않는다. 부채꼴 폭 안에
- * 형제가 아주 많으면 형제끼리는 겹칠 수 있고, 이건 "각 화살표는 딱 필요한 만큼만
- * 짧게"를 택한 대가로 받아들인 절충이다. */
+ * 이 규칙만으로는 부모-자식만 보장된다 — 형제끼리(부모에서 각자 거리를 가지고 각도만
+ * 다른 도형들)의 겹침은 길이가 아니라 각도 문제라, 부채꼴 폭 안에 형제가 많아지면
+ * (기본 크기 기준 자식 5개부터) 형제끼리 겹치기 시작한다. 그래서 그런 부모에 한해서만,
+ * 그 부모가 자기 자식들에게 내보내는 화살표 전체에 같은 배율을 곱해 필요한 만큼
+ * 밀어낸다(siblingSpreadScale 참고). 중요한 건 이 배율이 **그 부모의 자식 간선에만**
+ * 적용된다는 것 — 중심→가지처럼 위쪽에 있는 화살표나 다른 부모의 자식 간선으로는
+ * 절대 번지지 않아서, "무관한 사정이 엉뚱한 화살표를 길게 만든다"는 원래 문제는
+ * 여전히 생기지 않는다. */
 
 const MINDMAP_NODE_CIRCLE_MARGIN = 20; // 도형을 감싼 원의 반지름에 더하는 여유(두 도형 사이엔 그 두 배만큼 빈 공간이 생긴다)
 const MINDMAP_BRANCH_SECTOR_MARGIN = 1.15; // 가지별 부채꼴 반폭에 곱하는 여유 배수(15%)
@@ -4620,6 +4624,40 @@ const MINDMAP_TREE_SEPARATION = (a, b) => (a.parent === b.parent ? 1 : 2) / Math
 // 그 둘이 어떤 각도로 놓이든 절대 안 겹치는 최소 중심간 거리가 된다.
 function mindmapNodeRadius(size) {
   return Math.max(size.w, size.h) / 2 + MINDMAP_NODE_CIRCLE_MARGIN;
+}
+
+/* 한 부모의 자식들끼리 겹치지 않으려면 그 자식들을 얼마나 더 밀어내야 하는지(배율).
+ * 형제 겹침은 각도 문제라 "두 도형이 안 겹치는 최소 거리"만으로는 못 막는데, 각도는
+ * 부채꼴 규칙이 정한 값이라 건드릴 수 없으므로 거리로 푼다 — 한 부모의 자식을 전부
+ * 같은 배율 k 로 밀어내면 형제 사이 거리도 정확히 k 배가 되므로(거리가 반지름에 대해
+ * 1차 동차), 필요한 k 는 "지금 거리 대비 필요한 거리"의 비 중 최댓값으로 한 번에 나온다.
+ * 자식이 서로 다른 크기일 수 있어 자식마다 부모로부터의 거리가 다르므로, 인접 쌍만
+ * 보지 않고 모든 쌍을 본다(한 부모의 자식 수는 작아서 비용은 무시해도 된다).
+ * 이 배율은 오직 이 부모가 자기 자식에게 내보내는 화살표에만 쓰인다 — 위쪽 화살표나
+ * 다른 부모에게는 전파되지 않는다. */
+function siblingSpreadScale(node, rawAngleOf, sizeOf) {
+  const kids = node.children;
+  if (!kids || kids.length < 2) return 1;
+  const parentRadius = mindmapNodeRadius(sizeOf(node.data.id));
+  // 부모를 원점에 둔 상대 위치 — 부모가 실제로 어디 있든 형제끼리의 거리는 같다.
+  const placed = kids.map((kid) => {
+    const radius = mindmapNodeRadius(sizeOf(kid.data.id));
+    const dist = parentRadius + radius;
+    const angle = rawAngleOf.get(kid.data.id);
+    return { radius, x: dist * Math.cos(angle), y: dist * Math.sin(angle) };
+  });
+
+  let scale = 1;
+  for (let i = 0; i < placed.length; i++) {
+    for (let j = i + 1; j < placed.length; j++) {
+      const a = placed[i];
+      const b = placed[j];
+      const gap = Math.hypot(a.x - b.x, a.y - b.y);
+      if (gap < 1e-9) continue; // 각도까지 완전히 같은 병리적 경우 — 밀어내도 소용없다
+      scale = Math.max(scale, (a.radius + b.radius) / gap);
+    }
+  }
+  return scale;
 }
 
 function layoutMindmapRadial(block, sizes) {
@@ -4658,17 +4696,26 @@ function layoutMindmapRadial(block, sizes) {
     });
   }
 
+  // 부모마다, 자기 자식들끼리 안 겹치게 하려면 그 자식들을 얼마나 밀어내야 하는지.
+  // 자식이 1개 이하이거나 이미 충분히 벌어져 있으면 1(= 그대로)이다.
+  const spreadScaleOf = new Map();
+  root.each((node) => {
+    spreadScaleOf.set(node.data.id, siblingSpreadScale(node, rawAngleOf, sizeOf));
+  });
+
   // 직속 부모 기준 재귀 배치: 각 노드 = 부모 위치 + (그 화살표 고유의 길이) × (자기
-  // 각도 방향). 길이는 그 화살표가 잇는 두 도형의 감싼 원 반지름 합뿐이라, 형제 수나
-  // 다른 가지의 사정은 여기에 전혀 끼어들지 않는다. root.each() 는 항상 얕은 깊이부터
-  // (부모가 자식보다 먼저) 순회하므로, 이 한 번의 순회 안에서 부모 위치가 이미 채워져
-  // 있는 게 보장된다.
+  // 각도 방향). 길이는 그 화살표가 잇는 두 도형의 감싼 원 반지름 합에, 그 부모가
+  // 자기 자식들을 벌려야 하는 배율만 곱한 값이다 — 다른 부모/다른 가지의 사정은
+  // 여기에 전혀 끼어들지 않는다. root.each() 는 항상 얕은 깊이부터(부모가 자식보다
+  // 먼저) 순회하므로, 이 한 번의 순회 안에서 부모 위치가 이미 채워져 있는 게 보장된다.
   const positions = new Map();
   positions.set(root.data.id, { x: 0, y: 0 });
   root.each((node) => {
     if (node.depth === 0) return; // 루트는 이미 원점에 있다
-    const edgeLength = mindmapNodeRadius(sizeOf(node.parent.data.id)) + mindmapNodeRadius(sizeOf(node.data.id));
-    const parentPos = positions.get(node.parent.data.id);
+    const parentId = node.parent.data.id;
+    const baseLength = mindmapNodeRadius(sizeOf(parentId)) + mindmapNodeRadius(sizeOf(node.data.id));
+    const edgeLength = baseLength * spreadScaleOf.get(parentId);
+    const parentPos = positions.get(parentId);
     const angle = rawAngleOf.get(node.data.id) - Math.PI / 2; // 0라디안이 12시 방향이 되도록
     positions.set(node.data.id, {
       x: parentPos.x + edgeLength * Math.cos(angle),
