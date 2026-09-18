@@ -562,6 +562,29 @@ body {
   background: var(--warning);
 }
 
+/* 그룹에 안 속한 도형은 테두리 색만으론 "무슨 용도(단계/분기/...)"인지 알기 어려워서
+   (그룹 소속 도형은 그룹 이름표의 타입 배지로 알 수 있지만, 미소속 도형엔 그런 배지가
+   없다) 도형 왼쪽 위 모서리에 작은 라벨로 SHAPE_LABELS 값을 띄운다. 다이아몬드 등
+   비사각형 도형도 이 항목의 바운딩 박스 모서리에 정박시킨다 — 리사이즈 핸들과 같은
+   기존 관례(모양이 박스 모서리까지 안 닿아도 모서리 기준으로 붙인다)를 그대로 따른다.
+   pointer-events:none 으로 클릭/드래그를 절대 가로채지 않는다. */
+.note-type-badge {
+  display: none;
+  position: absolute;
+  top: 2px;
+  left: 4px;
+  font-size: 9px;
+  line-height: 1.2;
+  color: var(--warning);
+  pointer-events: none;
+  z-index: 1;
+  white-space: nowrap;
+}
+
+.note[data-grouped="false"] .note-type-badge {
+  display: block;
+}
+
 .note.dragging .note-shape {
   box-shadow: 0 10px 26px rgba(31, 39, 51, 0.22);
 }

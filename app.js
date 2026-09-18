@@ -3060,6 +3060,14 @@ function renderNote(note) {
   shapeEl.className = "note-shape";
   el.appendChild(shapeEl);
 
+  // 그룹에 속하지 않은 도형에만 CSS(.note[data-grouped="false"] .note-type-badge)로
+  // 보이는 작은 용도 라벨(단계/분기/시작·끝/준비·설정/입력/출력) — 그룹 소속 도형은
+  // 그룹 이름표의 타입 배지로 이미 알 수 있어서 굳이 안 띄운다.
+  const typeBadgeEl = document.createElement("div");
+  typeBadgeEl.className = "note-type-badge";
+  typeBadgeEl.textContent = SHAPE_LABELS[note.shape] || "";
+  el.appendChild(typeBadgeEl);
+
   const textEl = document.createElement("div");
   textEl.className = "note-text";
   textEl.contentEditable = "true";
@@ -4545,7 +4553,16 @@ function layoutBlockWithDagre(block, sizes) {
  *  2) 형제끼리 부채꼴 안에서 너무 촘촘함: 부모 기준 재귀 모델에서는 한 부모의 모든
  *     자식이 정확히 반지름 edgeLength 인 원 위에 있으므로, 그 원에서 형제 사이
  *     호(arc) 길이가 항상 안전한 최소값 이상이 되도록 부모마다 역산해서 최댓값을
- *     쓴다. */
+ *     쓴다.
+ *
+ * 이 edgeLength 는 트리 전체가 공유하는 하나의 값이 아니라, **가지(1단계 자식)마다
+ * 독립적으로** 계산한다 — 한 가지가 자식을 5개 둬서 위 두 위험 때문에 자기 몫의
+ * edgeLength 가 커져도, 자식이 없거나 적은 다른 가지는 그 사정과 무관하게 dagre
+ * 수준의 짧은 값을 그대로 유지한다("이 가지는 위험하니 길게, 저 가지는 안전하니
+ * 짧게"). 대신 "화살표 길이가 트리 전체에서 항상 같다"는 성질은 "같은 가지 안에서는
+ * 항상 같다"로 좁혀진다 — 가지끼리는 원래 자손 수와 무관하게 정확히 360°/N 씩
+ * 떨어져 있어서(부채꼴 규칙) 서로 다른 반지름을 쓰더라도 실질적인 충돌 위험이
+ * 없다(가지 개수가 극단적으로 많고 길이 차이도 극단적인 인위적 사례로 별도 검증함). */
 
 const MINDMAP_RADIAL_BASE_EDGE_LENGTH = DEFAULT_NOTE_H + MERMAID_IMPORT_RANKSEP; // dagre 의 부모-자식 기본 간격과 비슷한 짧은 기본값
 const MINDMAP_RADIAL_EDGE_MARGIN = 60; // 겹침 회피 최소 거리 위에 추가로 두는 여백
@@ -4587,8 +4604,9 @@ function layoutMindmapRadial(block, sizes) {
 
   const branches = root.children || [];
   const N = branches.length;
+  let nominalSector = 0;
   if (N > 0) {
-    const nominalSector = (2 * Math.PI) / N;
+    nominalSector = (2 * Math.PI) / N;
     const halfWidth = (nominalSector / 2) * MINDMAP_BRANCH_SECTOR_MARGIN;
     branches.forEach((branchNode, i) => {
       const branchCenter = i * nominalSector;
@@ -4607,60 +4625,100 @@ function layoutMindmapRadial(block, sizes) {
     });
   }
 
-  let edgeLength = MINDMAP_RADIAL_BASE_EDGE_LENGTH;
+  // edgeLength 는 가지(1단계 자식)마다 독립적으로 계산한다 — 한 가지의 자손이
+  // 아무리 촘촘해도(예: 자식 5개), 그 사정이 다른 단순한 가지(자식 없음)에까지
+  // 번져서 불필요하게 길어지면 안 되기 때문이다. 가지마다 "루트→그 가지 자신"
+  // 간선과 그 가지의 모든 후손만 훑어서(branchNode.each()) 자기 몫의 edgeLength 를
+  // 스스로 정한다 — 서로 다른 가지끼리는 완전히 독립적이다.
+  //
+  // (가지끼리 서로 다른 edgeLength 를 갖게 되면 "화살표 길이가 트리 전체에서 항상
+  // 똑같다"는 이전 턴의 성질은 "같은 가지 안에서는 항상 똑같다"로 좁혀진다 — 이번
+  // 요청 자체가 "위험 없는 가지는 짧게, 위험 있는 가지만 길게"를 요구해서 생기는
+  // 당연한 결과다. 가지들끼리는 애초에 정확히 360°/N 씩 균등하게 떨어져 있고
+  // (자손 수와 무관하게 고정) 서로 다른 반지름이어도 두 점 사이 직선거리가 여전히
+  // 넉넉해서, 가지 개수가 극단적으로 많지 않은 한 가지-가지 간 충돌은 실질적으로
+  // 걱정할 필요가 없다 — 아주 많은 가지 + 극단적인 길이 차이 조합으로 별도 검증함.)
+  const edgeLengthOfBranch = new Map();
+  branches.forEach((branchNode) => {
+    let el = MINDMAP_RADIAL_BASE_EDGE_LENGTH;
 
-  // 위험 1: 부모→자식이 거의 같은 각도로 이어지는 사슬에서, 실제 도형 크기 기준으로
-  // 안 겹치는 최소 간선 길이를 모든 부모-자식 쌍에 대해 계산해서 최댓값을 쓴다.
-  // 겹침 판정에 필요한 건 "부모의 각도와 자식의 각도 차이"가 아니라 "부모→자식을
-  // 잇는 선분이 전역 좌표계에서 실제로 향하는 방향"이다 — 이 방향은 항상 자식 자신의
-  // 각도(에 최종 -90도 회전을 적용한 값, 최종 배치 때 쓰는 것과 동일)이지 부모 각도와는
-  // 무관하다(부모, 특히 루트는 "자기 고유의 방향"이라는 개념 자체가 없다). 부모 각도를
-  // 빼는 실수를 하면(이전 버전의 버그) 예를 들어 루트→첫 가지처럼 무관한 두 각도가 우연히
-  // 같아져 "완전히 정렬됨"으로 잘못 판정되거나, 반대로 진짜 정렬된 사슬에서 필요한
-  // 세로 여유 대신 엉뚱한 가로 여유를 계산해 실제로 겹치는 사고(폭보다 훨씬 큰 자동
-  // 높이조정 도형에서 확인됨)로 이어진다.
-  root.each((node) => {
-    if (node.depth === 0) return;
-    const parentSize = sizeOf(node.parent.data.id);
-    const childSize = sizeOf(node.data.id);
-    const edgeAngle = rawAngleOf.get(node.data.id) - Math.PI / 2;
-    const needed =
-      minNonOverlapDistance(edgeAngle, parentSize.w / 2, parentSize.h / 2, childSize.w / 2, childSize.h / 2) +
-      MINDMAP_RADIAL_EDGE_MARGIN;
-    edgeLength = Math.max(edgeLength, needed);
+    // 위험 1: 이 가지 자신(루트→가지 간선 포함)과 그 후손 사슬의 정렬 겹침.
+    // 겹침 판정에 필요한 건 "부모의 각도와 자식의 각도 차이"가 아니라 "부모→자식을
+    // 잇는 선분이 전역 좌표계에서 실제로 향하는 방향"이다 — 이 방향은 항상 자식
+    // 자신의 각도(최종 배치 때 쓰는 것과 동일)이지 부모 각도와는 무관하다(부모,
+    // 특히 루트는 "자기 고유의 방향"이라는 개념 자체가 없다).
+    branchNode.each((node) => {
+      const parentSize = sizeOf(node.parent.data.id);
+      const childSize = sizeOf(node.data.id);
+      const edgeAngle = rawAngleOf.get(node.data.id) - Math.PI / 2;
+      const needed =
+        minNonOverlapDistance(edgeAngle, parentSize.w / 2, parentSize.h / 2, childSize.w / 2, childSize.h / 2) +
+        MINDMAP_RADIAL_EDGE_MARGIN;
+      el = Math.max(el, needed);
+    });
+
+    // 위험 2: 이 가지 내부에서(자기 자신 포함) 형제끼리 부채꼴 안에 너무 촘촘함.
+    branchNode.each((node) => {
+      const kids = node.children;
+      if (!kids || kids.length < 2) return;
+      const sorted = kids.map((k) => ({ id: k.data.id, angle: rawAngleOf.get(k.data.id) })).sort((a, b) => a.angle - b.angle);
+      for (let i = 1; i < sorted.length; i++) {
+        const gap = sorted[i].angle - sorted[i - 1].angle;
+        if (!(gap > 0)) continue; // 각도가 완전히 같은 경우 방지
+        const sizeA = sizeOf(sorted[i - 1].id);
+        const sizeB = sizeOf(sorted[i].id);
+        const neededArc = sizeA.w / 2 + sizeB.w / 2 + MINDMAP_RADIAL_EDGE_MARGIN;
+        el = Math.max(el, neededArc / gap);
+      }
+    });
+
+    edgeLengthOfBranch.set(branchNode.data.id, el);
   });
 
-  // 위험 2: 부채꼴로 좁혀진 각도 때문에 형제끼리 너무 촘촘해진 곳이 있는지 확인해서,
-  // 필요하면 edgeLength 를 키운다 — 부모 기준 재귀 모델에서는 어느 부모든 그 자식들이
-  // 정확히 반지름 edgeLength 인 원 위에 있으므로, "부모 하나당 인접한 형제 사이 최소
-  // 각도 간격"×edgeLength(호 길이)가 그 형제 쌍의 실제 폭(반너비 합)+여백 이상이
-  // 되도록 모든 부모에 대해 역산해서 가장 큰 값을 쓴다.
-  root.each((node) => {
-    const kids = node.children;
-    if (!kids || kids.length < 2) return;
-    const sorted = kids.map((k) => ({ id: k.data.id, angle: rawAngleOf.get(k.data.id) })).sort((a, b) => a.angle - b.angle);
-    for (let i = 1; i < sorted.length; i++) {
-      const gap = sorted[i].angle - sorted[i - 1].angle;
-      if (!(gap > 0)) continue; // 각도가 완전히 같은 경우 방지
-      const sizeA = sizeOf(sorted[i - 1].id);
-      const sizeB = sizeOf(sorted[i].id);
-      const neededArc = sizeA.w / 2 + sizeB.w / 2 + MINDMAP_RADIAL_EDGE_MARGIN;
-      edgeLength = Math.max(edgeLength, neededArc / gap);
+  // 위험 3: 가지(1단계 노드) 그 자체끼리도 서로 안전 거리가 필요하다 — 가지끼리는
+  // 자손 수와 무관하게 항상 정확히 360°/N 만큼 떨어져 있지만, 가지가 많으면(N이
+  // 크면) 그 고정 각도 간격이 도형 크기에 비해 좁을 수 있다. 이건 "가지 내부" 문제가
+  // 아니라 서로 다른 두 가지 사이의 문제라 위 per-branch 루프(각자 자기 후손만 봄)로는
+  // 절대 못 잡는다 — 인접한 가지 쌍마다, "둘 다 같은 반지름 R을 쓴다면 안전한 최소
+  // R"을 현 위치 공식(정확한 코사인 법칙 대신, 두 가지가 원 위에서 같은 반지름일 때의
+  // 현 길이 공식 2R·sin(각도/2) 사용)으로 구해서 그 R을 두 가지 각각의 최소값으로
+  // 반영한다 — 실제로는 두 가지의 최종 edgeLength 가 서로 다를 수 있지만, 각도가
+  // 지나치게 좁지 않은 한 반지름이 클수록 서로 더 멀어지므로 "둘 다 이 최소값 이상"
+  // 이면 실제 거리도 이보다 가까워지지 않는다.
+  if (N > 1) {
+    const chordFactor = 2 * Math.sin(nominalSector / 2);
+    for (let i = 0; i < N; i++) {
+      const j = (i + 1) % N;
+      const nodeI = branches[i];
+      const nodeJ = branches[j];
+      const sizeI = sizeOf(nodeI.data.id);
+      const sizeJ = sizeOf(nodeJ.data.id);
+      const neededChord = sizeI.w / 2 + sizeJ.w / 2 + MINDMAP_RADIAL_EDGE_MARGIN;
+      const floor = chordFactor > 1e-9 ? neededChord / chordFactor : Infinity;
+      edgeLengthOfBranch.set(nodeI.data.id, Math.max(edgeLengthOfBranch.get(nodeI.data.id), floor));
+      edgeLengthOfBranch.set(nodeJ.data.id, Math.max(edgeLengthOfBranch.get(nodeJ.data.id), floor));
     }
-  });
+  }
 
   // 직속 부모 기준 재귀 배치: 각 노드 = 부모 위치 + edgeLength * (자기 각도 방향).
-  // root.each() 는 항상 얕은 깊이부터(부모가 자식보다 먼저) 순회하므로, 이 한 번의
-  // 순회 안에서 자식을 계산할 때 부모 위치가 이미 채워져 있는 게 보장된다.
+  // 가지(1단계) 자신은 자기 몫의 edgeLength 를, 그 자손들은 자신이 속한 최상위
+  // 가지의 edgeLength 를 그대로 물려받는다(가지 내부에서는 화살표 길이가 여전히
+  // 균일하다 — 가지마다 다를 뿐). root.each() 는 항상 얕은 깊이부터(부모가 자식보다
+  // 먼저) 순회하므로, 이 한 번의 순회 안에서 부모의 위치·소속 가지가 이미 채워져
+  // 있는 게 보장된다.
   const positions = new Map();
   positions.set(root.data.id, { x: 0, y: 0 });
+  const branchIdOf = new Map(); // node.id -> 그 노드가 속한 최상위 가지의 id
   root.each((node) => {
     if (node.depth === 0) return; // 루트는 이미 원점에 있다
+    const branchId = node.depth === 1 ? node.data.id : branchIdOf.get(node.parent.data.id);
+    branchIdOf.set(node.data.id, branchId);
+    const el = edgeLengthOfBranch.get(branchId);
     const parentPos = positions.get(node.parent.data.id);
     const angle = rawAngleOf.get(node.data.id) - Math.PI / 2; // 0라디안이 12시 방향이 되도록
     positions.set(node.data.id, {
-      x: parentPos.x + edgeLength * Math.cos(angle),
-      y: parentPos.y + edgeLength * Math.sin(angle),
+      x: parentPos.x + el * Math.cos(angle),
+      y: parentPos.y + el * Math.sin(angle),
     });
   });
   return positions;
@@ -5045,7 +5103,11 @@ function rearrangeNotes(targetNoteIds) {
       // 상태가 안 생긴다(요청: 실제로 표시되는 도형에도 대체가 적용되게).
       if (info.shape && info.shape !== note.shape) {
         note.shape = info.shape;
-        if (el) el.dataset.shape = note.shape;
+        if (el) {
+          el.dataset.shape = note.shape;
+          const badge = el.querySelector(".note-type-badge");
+          if (badge) badge.textContent = SHAPE_LABELS[note.shape] || "";
+        }
         if (note.autoSize !== false) syncNoteHeightToText(note); // 도형이 바뀌면 인셋 비율도 달라지니 다시 맞춘다
       }
       if (el) {
