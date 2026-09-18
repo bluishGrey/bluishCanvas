@@ -122,6 +122,14 @@ const DEFAULT_NOTE_W = 170;
 const DEFAULT_NOTE_H = 70;
 const MIN_NOTE_SIZE = 60; // 메모가 이보다 작게 줄어들지는 않는다
 const MAX_AUTO_FIT_NOTE_H = 480; // 텍스트 넘침에 맞춰 자동으로 키울 때의 상한 — 무한정 커지지 않도록
+// 마인드맵 타입 도형 전용 자동 크기의 하한 — 일반 메모(플로우차트)는 통일된 크기가
+// 더 보기 좋아서 DEFAULT_NOTE_W/H 를 그대로 하한으로 쓰지만, 마인드맵은 "중심"/"가지1"
+// 처럼 짧은 텍스트가 흔해서 그 하한이 불필요하게 크다 — 게다가 이 크기가 그대로
+// edgeLength(화살표 길이) 계산에 들어가므로, 짧은 텍스트 도형이 작아지면 화살표도
+// 따라서 짧아진다. 수동 리사이즈의 절대 하한(MIN_NOTE_SIZE)과 같은 값을 쓴다 —
+// 자동으로도 손으로도 그 밑으로는 안 내려간다는 하나의 기준을 유지하기 위해서다.
+const MINDMAP_MIN_NOTE_W = MIN_NOTE_SIZE;
+const MINDMAP_MIN_NOTE_H = MIN_NOTE_SIZE;
 const DEFAULT_SHAPE = "rect";
 // 플로우차트 도형 6종 — 이름은 기하학적 모양이 아니라 흐름도에서의 "용도"를 그대로 쓴다
 // (Mermaid 플로우차트 문법의 표준 도형 이름과도 맞춘 것 — 아래 flowchartNodeLine 참고).
@@ -2326,6 +2334,74 @@ function measureNoteFitHeight(text, shape, diagramType, fontSize, textAlign, w, 
   return Math.max(h, neededH);
 }
 
+/* ===== 마인드맵 전용: 텍스트 길이에 맞춰 너비까지 자동으로 줄어드는 크기 계산 =====
+ * 플로우차트는 도형 크기가 통일된 느낌이 보기 좋아서 너비를 항상 DEFAULT_NOTE_W 로
+ * 고정하지만(위 measureNoteFitHeight — 높이만 잰다), 마인드맵은 "중심"/"가지1"처럼
+ * 짧은 텍스트가 흔하고, 이 크기가 그대로 방사형 레이아웃의 edgeLength(화살표 길이)
+ * 계산에 들어가므로 너비도 텍스트에 맞춰 줄어들 필요가 있다.
+ *
+ * 인셋 비율(원/마름모 등 도형별로 텍스트 영역이 박스 안쪽 몇 %에서 시작하는지)을 여기
+ * 하드코딩하지 않고, measureNoteFitHeight 와 같은 원칙으로 기준 크기(DEFAULT_NOTE_W x
+ * DEFAULT_NOTE_H)에서 실제 렌더된 텍스트 영역의 비율을 측정해 쓴다 — 스타일시트 값이
+ * 나중에 바뀌어도 이 계산은 그대로 맞는다. */
+function measureMindmapNoteWidth(text, shape, fontSize, textAlign) {
+  // 1) 기준 크기에서 이 도형의 텍스트 영역이 실제로 차지하는 가로 비율.
+  const refProbe = document.createElement("div");
+  refProbe.className = "note";
+  refProbe.dataset.shape = shape;
+  refProbe.dataset.diagramType = "mindmap";
+  refProbe.style.position = "fixed";
+  refProbe.style.left = "-99999px";
+  refProbe.style.top = "0";
+  refProbe.style.width = `${DEFAULT_NOTE_W}px`;
+  refProbe.style.height = `${DEFAULT_NOTE_H}px`;
+  refProbe.style.visibility = "hidden";
+  const refTextEl = document.createElement("div");
+  refTextEl.className = "note-text";
+  refProbe.appendChild(refTextEl);
+  document.body.appendChild(refProbe);
+  const widthRatio = refTextEl.clientWidth / DEFAULT_NOTE_W;
+  document.body.removeChild(refProbe);
+  if (!(widthRatio > 0)) return DEFAULT_NOTE_W; // 측정 실패 시 기존 너비로 안전하게 대체
+
+  // 2) 텍스트 자체가 줄바꿈 없이 한 줄(들)로 필요한 실제 폭(자연 폭) — 명시적 줄바꿈은
+  // 그대로 유지하되(white-space:pre) 너비 때문에 자동으로 꺾이지는 않게 해서 잰다.
+  const textProbe = document.createElement("div");
+  textProbe.className = "note-text";
+  textProbe.style.position = "fixed";
+  textProbe.style.left = "-99999px";
+  textProbe.style.top = "0";
+  // .note-text 클래스의 inset:0 은 top/right/bottom/left 를 전부 0 으로 얹어둔다 —
+  // right/bottom 을 여기서 auto 로 되돌리지 않으면 절대위치 요소가 (left=-99999px)와
+  // (right=0) 사이를 꽉 채우도록 늘어나서(너비가 뷰포트만큼 커짐) 자연 폭을 전혀
+  // 잴 수 없다. 이 프로브는 부모 도형 없이 독립적으로 텍스트 크기만 재는 용도라 그
+  // 늘어남 규칙 자체가 필요 없다.
+  textProbe.style.right = "auto";
+  textProbe.style.bottom = "auto";
+  textProbe.style.display = "inline-block";
+  textProbe.style.whiteSpace = "pre";
+  textProbe.style.fontSize = `${fontSize}px`;
+  textProbe.style.textAlign = textAlign;
+  textProbe.textContent = text || "";
+  document.body.appendChild(textProbe);
+  const naturalWidth = textProbe.scrollWidth;
+  document.body.removeChild(textProbe);
+
+  const neededW = Math.ceil(naturalWidth / widthRatio);
+  return Math.min(DEFAULT_NOTE_W, Math.max(MINDMAP_MIN_NOTE_W, neededW));
+}
+
+// 마인드맵 도형 하나의 최종 {w, h} — 너비를 먼저 텍스트에 맞게 줄인 뒤(위 함수), 그
+// 너비를 기준으로 높이를 기존 measureNoteFitHeight 로 계산한다(하한만 더 낮게).
+// 텍스트가 길어서 너비가 DEFAULT_NOTE_W 로 꽉 찬 경우, 이 두 번째 단계가 곧 기존
+// 플로우차트와 완전히 같은 줄바꿈 기반 높이 계산이 되므로 "이미 충분히 큰 도형은
+// 그대로 유지"가 저절로 성립한다.
+function computeMindmapNoteSize(text, shape, fontSize, textAlign) {
+  const w = measureMindmapNoteWidth(text, shape, fontSize, textAlign);
+  const h = measureNoteFitHeight(text, shape, "mindmap", fontSize, textAlign, w, MINDMAP_MIN_NOTE_H);
+  return { w, h };
+}
+
 // note.autoSize 가 false 가 아닌 동안엔(기본값 — 사용자가 모서리를 잡고 수동으로
 // 리사이즈한 적이 없는 도형), 도형 높이를 "지금 텍스트 양에 정확히 비례하는 값"으로
 // 매번 다시 계산한다 — 늘어나면 커지고, 줄어들면 다시 작아진다(예전엔 커지기만 하고
@@ -2335,9 +2411,24 @@ function measureNoteFitHeight(text, shape, diagramType, fontSize, textAlign, w, 
 // measureNoteFitHeight 자체는 순수 측정 함수라 그 기준 높이보다 작게는 절대 안 돌려주므로,
 // 결과적으로 DEFAULT_NOTE_H(기존 기본 크기)가 자동 크기의 하한이 된다 — 문서/그룹 이름표처럼
 // 다른 작은 요소들과 달리, 메모는 아무리 텍스트가 짧아도 기존에 익숙한 기본 크기 밑으로는
-// 안 작아지는 편이 자연스럽다고 판단했다. 너비는 여기서 전혀 건드리지 않는다(세로만 자동).
+// 안 작아지는 편이 자연스럽다고 판단했다. 너비는 여기서 전혀 건드리지 않는다(세로만 자동) —
+// 단, 마인드맵 타입은 예외다: 아래에서 너비도 함께(더 낮은 하한으로) 자동 조정한다.
 function syncNoteHeightToText(note) {
   if (note.autoSize === false) return false;
+
+  if (note.diagramType === "mindmap") {
+    const { w: neededW, h: neededH } = computeMindmapNoteSize(note.text, note.shape, note.fontSize, note.textAlign);
+    if (neededW === note.w && neededH === note.h) return false;
+    note.w = neededW;
+    note.h = neededH;
+    const el = noteEl(note.id);
+    if (el) {
+      el.style.width = `${neededW}px`;
+      el.style.height = `${neededH}px`;
+    }
+    return true;
+  }
+
   const neededH = measureNoteFitHeight(note.text, note.shape, note.diagramType, note.fontSize, note.textAlign, note.w, DEFAULT_NOTE_H);
   if (neededH === note.h) return false;
   note.h = neededH;
@@ -3184,13 +3275,25 @@ function applyStyleToSelection(field, value) {
     });
   }
 
+  let arrowGeometryDirty = false;
   targetIds.forEach((id) => {
     const note = getNote(id);
     if (!note) return;
     note[field] = value;
     updateNoteStyleDOM(note);
+    // 마인드맵으로 바뀌면 짧은 텍스트 도형이 곧바로 작아지고, 마인드맵에서 다른
+    // 타입으로 바뀌면 다시 플로우차트 기준(고정 너비)으로 돌아가야 하므로, 타입이
+    // 바뀐 순간 크기를 다시 계산한다(그러지 않으면 텍스트를 고치기 전까진 예전
+    // 타입 기준 크기 그대로 남는다).
+    if (field === "diagramType" && syncNoteHeightToText(note)) arrowGeometryDirty = true;
   });
+  // renderGroups() 가 이 시점에 이미 최신 note.w/h 기준으로 그룹 박스를 다시 그리므로,
+  // 크기 변화에 따른 그룹 박스 갱신은 따로 안 해도 된다 — 화살표/핸들만 챙기면 된다.
   if (field === "diagramType") renderGroups(); // 그룹 박스 색이 타입을 따라가므로 다시 그린다
+  if (arrowGeometryDirty) {
+    updateHandles();
+    updateAllArrowGeometry();
+  }
   updateStylePanel();
   commitChange();
 }
@@ -3832,10 +3935,13 @@ canvas.addEventListener("click", (e) => {
   }
 });
 
-// 빈 곳 더블클릭 → 새 메모 (커서 위치에 대략 중앙 정렬)
+// 빈 곳 더블클릭 → 새 메모 (커서 위치에 대략 중앙 정렬). 그 자리가 어느 그룹의
+// 배경 영역 안이면(우클릭 퀵메뉴로 만들 때와 같은 판정 — groupAtWorldPoint), 새
+// 메모를 바로 그 그룹에 편입시킨다 — 만들고 나서 따로 드래그해 넣을 필요가 없게.
 canvas.addEventListener("dblclick", (e) => {
   const p = screenToWorld(e.clientX, e.clientY);
-  const el = createNote(p.x - DEFAULT_NOTE_W / 2, p.y - DEFAULT_NOTE_H / 2);
+  const group = groupAtWorldPoint(p);
+  const el = createNote(p.x - DEFAULT_NOTE_W / 2, p.y - DEFAULT_NOTE_H / 2, "", nextShape, group ? group.id : null);
   if (!el) {
     showCanvasNotice(e.clientX, e.clientY, mindmapShapeBlockedMessage(nextShape));
     return;
@@ -4686,8 +4792,13 @@ function toDagreRankDir(direction) {
 // 블록 안의 노드마다, 라벨이 기본 크기(DEFAULT_NOTE_W x DEFAULT_NOTE_H)에 넘치지 않고
 // 들어갈 크기를 미리 재둔다 — dagre/방사형 레이아웃이 서로 겹치지 않게 간격을 잡을 때부터
 // 이 실제 크기를 알아야(레이아웃 이후에 키우면 다른 도형과 겹칠 수 있다) 하므로 레이아웃보다
-// 먼저 계산한다. 너비는 기본적으로 항상 기본값 그대로 유지한다(다이어그램 전체가 들쭉날쭉한
-// 너비로 나열되면 어색해서, 일반 도형 목록처럼 통일된 너비 안에서 세로만 늘린다).
+// 먼저 계산한다. flowchart 는 너비를 항상 기본값 그대로 유지한다(다이어그램 전체가
+// 들쭉날쭉한 너비로 나열되면 어색해서, 일반 도형 목록처럼 통일된 너비 안에서 세로만
+// 늘린다). mindmap 은 반대로 computeMindmapNoteSize 로 너비까지 텍스트에 맞게 줄인다 —
+// 이 크기가 그대로 방사형 레이아웃의 edgeLength(화살표 길이) 계산에 들어가므로, "중심"/
+// "가지1"처럼 짧은 텍스트 도형이 작아지면 그 도형이 관련된 화살표도 자동으로 짧아진다
+// (syncNoteHeightToText 의 실제 도형 크기 계산과 완전히 같은 함수를 써서, 재배치 후
+// 실제 렌더된 도형과 여기서 가정한 크기가 어긋나지 않는다).
 //
 // sizeOverrideFor(선택, mermaidId -> {w,h} | null): 재배치(rearrange) 전용 — 수동으로
 // 리사이즈한(autoSize=false) 도형은 이 "텍스트 기준 이상적 크기" 계산을 건너뛰고 실제
@@ -4701,6 +4812,10 @@ function computeBlockNodeSizes(block, sizeOverrideFor) {
     const override = sizeOverrideFor && sizeOverrideFor(id);
     if (override) {
       sizes.set(id, override);
+      return;
+    }
+    if (block.type === "mindmap") {
+      sizes.set(id, computeMindmapNoteSize(info.label, info.shape || "rect", DEFAULT_FONT_SIZE, DEFAULT_TEXT_ALIGN));
       return;
     }
     const h = measureNoteFitHeight(
@@ -5289,11 +5404,8 @@ function rearrangeNotes(targetNoteIds) {
       if (!note) return;
       const center = positions.get(mermaidId);
       const size = sizes.get(mermaidId);
-      note.x = center.x + offset.x - size.w / 2;
-      note.y = center.y + offset.y - size.h / 2;
-      // w/h 는 절대 안 건드린다 — autoSize 도형은 이미 텍스트에 맞는 크기이고,
-      // 수동 리사이즈한 도형의 크기는 그대로 존중돼야 하기 때문이다.
       const el = noteEl(note.id);
+
       // 도형은 다시 파싱된 값으로 맞춰준다 — flowchart 는 6종 전부 문법이 1:1 왕복이라
       // 이 대입이 항상 no-op(같은 값)이지만, 마인드맵은 대응 토큰이 없는 도형(입력/출력)
       // 이 사각형으로 대체된 채 나갔다가 다시 그 모습으로 들어오므로, 여기서 실제
@@ -5302,11 +5414,24 @@ function rearrangeNotes(targetNoteIds) {
       if (info.shape && info.shape !== note.shape) {
         note.shape = info.shape;
         if (el) el.dataset.shape = note.shape;
-        if (note.autoSize !== false) syncNoteHeightToText(note); // 도형이 바뀌면 인셋 비율도 달라지니 다시 맞춘다
       }
+
+      // note.w/h 를 이 size 에 맞춘다 — 수동 리사이즈한(autoSize=false) 도형은
+      // sizeOverrideFor 가 애초에 이 size 를 "그 도형의 지금 실제 크기"로 채워뒀으므로
+      // 이 대입이 항상 자기 자신을 되돌려주는 no-op 이고, autoSize 도형은 방금 다시 계산한
+      // "텍스트 기준 실제 크기"를 즉시 반영한다 — 특히 마인드맵은 이 대입이 있어야
+      // 재배치 직후 짧은 텍스트 도형이 바로 작아진다(텍스트를 다시 고쳐야만 줄어드는
+      // 게 아니라). 플로우차트는 너비가 원래도 DEFAULT_NOTE_W 그대로였고 높이도 이미
+      // 최신값이었을 것이므로 겉보기 동작은 그대로다.
+      note.w = size.w;
+      note.h = size.h;
+      note.x = center.x + offset.x - size.w / 2;
+      note.y = center.y + offset.y - size.h / 2;
       if (el) {
         el.style.left = `${note.x}px`;
         el.style.top = `${note.y}px`;
+        el.style.width = `${size.w}px`;
+        el.style.height = `${size.h}px`;
       }
       movedNotes.push(note);
       movedCount++;
