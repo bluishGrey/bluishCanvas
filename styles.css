@@ -412,6 +412,17 @@ body {
   stroke-width: 2.5;
 }
 
+/* 그룹↔그룹 화살표: 도형 사이 화살표와 헷갈리지 않게 조금 더 굵은 점선으로 —
+   "도형 하나하나가 아니라 묶음 전체끼리의 관계"라는 걸 한눈에 구분할 수 있게. */
+.arrow.group-link .arrow-visible {
+  stroke-width: 2.5;
+  stroke-dasharray: 8 5;
+}
+
+.arrow.group-link.selected .arrow-visible {
+  stroke-width: 3;
+}
+
 /* 클릭 판정용 — 안 보이지만 훨씬 두꺼운 선. "선 위 어디를 클릭해도 선택"되게 하는
    허용 오차 역할. pointer-events:stroke 라서 이 두꺼운 선의 영역 안에서만 반응한다. */
 .arrow-hit {
@@ -751,10 +762,14 @@ body {
      안쪽에 오도록(모서리로 삐져나가지 않도록) 만든다. */
   position: absolute;
   inset: 0;
-  /* 가로/세로 모두 가운데 정렬. 여러 줄일 때도 각 줄이 가운데로 오도록 text-align 도 같이 준다. */
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  /* 세로 가운데 정렬은 align-content, 가로 정렬은 text-align 으로 한다.
+     예전엔 display:flex 로 가운데 정렬했는데, contentEditable 을 flex 컨테이너로 두면
+     안에 들어오는 줄(<div>)·글자 덩어리 하나하나가 "flex 아이템"이 되어 옆으로 나란히
+     놓인다 — Enter 를 쳤는데 줄이 아래로 안 내려가고 옆으로 붙던 원인이 이거였다.
+     일반 블록 + align-content 는 줄이 평범하게 위→아래로 쌓인다.
+     safe: 내용이 박스보다 길어지면 위쪽이 잘려 안 보이는 대신 위에서부터 스크롤되게. */
+  display: block;
+  align-content: safe center;
   text-align: center;
   overflow-y: auto;
   overflow-x: hidden;
