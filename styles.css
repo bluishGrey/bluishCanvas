@@ -751,10 +751,14 @@ body {
      안쪽에 오도록(모서리로 삐져나가지 않도록) 만든다. */
   position: absolute;
   inset: 0;
-  /* 가로/세로 모두 가운데 정렬. 여러 줄일 때도 각 줄이 가운데로 오도록 text-align 도 같이 준다. */
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  /* 세로 가운데 정렬은 align-content, 가로 정렬은 text-align 으로 한다.
+     예전엔 display:flex 로 가운데 정렬했는데, contentEditable 을 flex 컨테이너로 두면
+     안에 들어오는 줄(<div>)·글자 덩어리 하나하나가 "flex 아이템"이 되어 옆으로 나란히
+     놓인다 — Enter 를 쳤는데 줄이 아래로 안 내려가고 옆으로 붙던 원인이 이거였다.
+     일반 블록 + align-content 는 줄이 평범하게 위→아래로 쌓인다.
+     safe: 내용이 박스보다 길어지면 위쪽이 잘려 안 보이는 대신 위에서부터 스크롤되게. */
+  display: block;
+  align-content: safe center;
   text-align: center;
   overflow-y: auto;
   overflow-x: hidden;

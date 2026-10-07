@@ -2418,7 +2418,7 @@ function measureNoteFitHeight(text, shape, diagramType, fontSize, textAlign, w, 
   textEl.className = "note-text";
   textEl.style.fontSize = `${fontSize}px`;
   textEl.style.textAlign = textAlign;
-  // 실제 .note-text 는 align-items:center 로 세로 가운데 정렬한다 — 그런데 내용이 넘칠 때
+  // 실제 .note-text 는 align-content:center 로 세로 가운데 정렬한다 — 그런데 내용이 넘칠 때
   // 가운데 정렬은 위/아래로 절반씩 넘치게 만들고, scrollTop 이 음수로 갈 수 없어서
   // scrollHeight 가 "박스 위로 넘친 절반"을 못 세고 실제보다 작게(대략 (박스높이+실제내용
   // 높이)/2 로) 보고한다 — 게다가 박스 높이를 바꿀 때마다 그 값 자체가 달라져서, 필요한
@@ -2426,7 +2426,7 @@ function measureNoteFitHeight(text, shape, diagramType, fontSize, textAlign, w, 
   // 측정용 프로브에서만 위쪽 정렬로 바꾸면 넘친 내용이 전부 아래쪽으로만 쌓여 scrollHeight
   // 가 박스 높이와 무관한 "진짜" 내용 높이를 정확히 돌려준다(실제로 보이는 도형은 원래대로
   // 가운데 정렬 그대로다 — 여기서 바꾼 건 이 임시 프로브 하나뿐).
-  textEl.style.alignItems = "flex-start";
+  textEl.style.alignContent = "start";
   textEl.textContent = text || "";
   probe.appendChild(textEl);
   document.body.appendChild(probe);
@@ -3356,11 +3356,9 @@ function applyNoteStyleToEl(el, textEl, note) {
 
   textEl.style.fontSize = `${note.fontSize ?? DEFAULT_FONT_SIZE}px`;
   const align = note.textAlign || DEFAULT_TEXT_ALIGN;
+  // .note-text 는 이제 flex 가 아닌 일반 블록이라(styles.css 참고) 줄 하나하나가 박스
+  // 전체 너비를 쓴다 — text-align 만으로 왼쪽/가운데/오른쪽 정렬이 그대로 된다.
   textEl.style.textAlign = align;
-  // text-align 은 줄바꿈된 텍스트 안에서만 효과가 있어서(짧은 한 줄짜리 글자는 어차피
-  // 내용만큼만 차지하는 박스가 가운데 있으니 안 움직여 보인다), 그 박스 자체를
-  // 왼쪽/가운데/오른쪽으로 옮기는 justify-content 도 같이 맞춰줘야 진짜 정렬처럼 보인다.
-  textEl.style.justifyContent = align === "left" ? "flex-start" : align === "right" ? "flex-end" : "center";
 }
 
 // 이미 화면에 그려진 메모의 스타일만 다시 적용한다 (전체 재렌더 없이).
@@ -3443,6 +3441,43 @@ function updateStylePanel() {
   removeFromGroupBtn.disabled = !canRemoveFromGroup;
 }
 
+// 커서 위치(선택 영역이 있으면 그걸 지우고)에 서식 없는 글자를 넣는다. 줄바꿈은
+// insertText("\n") 으로 넣으면 Chrome 이 <div> 문단으로 바꿔버리므로, 줄 단위로 쪼개서
+// 사이사이에 insertLineBreak 를 넣는다(plaintext-only 모드에선 이게 "\n" 글자로 들어간다).
+// execCommand 를 쓰는 이유는 이렇게 넣어야 브라우저의 편집 기록에 남아서 Ctrl+Z 로
+// 자연스럽게 되돌릴 수 있기 때문이다(Range 로 DOM 을 직접 고치면 되돌리기 기록이 끊긴다).
+function insertPlainTextAtCaret(text) {
+  text.split("\n").forEach((line, i) => {
+    if (i > 0) document.execCommand("insertLineBreak");
+    if (line) document.execCommand("insertText", false, line);
+  });
+}
+
+// contentEditable 안의 내용을 메모 텍스트로 읽는다. plaintext-only 모드에선 거의 항상
+// 글자 노드만 들어있지만, 브라우저가 빈 줄 자리에 <br> 을 끼워넣거나(맨 끝 줄을 지울 때
+// 등) 일반 편집 모드로 물러난 브라우저가 <div> 문단을 만들 수 있다 — textContent 는 이
+// 둘을 그냥 무시해서 줄바꿈이 사라지므로, 여기선 둘 다 "\n" 으로 바꿔 읽는다.
+// (pre-wrap 에선 "a\n<br>" 과 "a\n\n" 이 똑같이 두 줄로 보이므로, 이렇게 읽은 텍스트를
+// 다시 그려도 편집할 때 보던 모양 그대로 나온다.)
+function readEditableText(root) {
+  let out = "";
+  const walk = (node) => {
+    node.childNodes.forEach((child) => {
+      if (child.nodeType === Node.TEXT_NODE) {
+        out += child.data;
+      } else if (child.nodeName === "BR") {
+        out += "\n";
+      } else if (child.nodeType === Node.ELEMENT_NODE) {
+        const isBlock = child.nodeName === "DIV" || child.nodeName === "P";
+        if (isBlock && out !== "" && !out.endsWith("\n")) out += "\n";
+        walk(child);
+      }
+    });
+  };
+  walk(root);
+  return out;
+}
+
 function renderNote(note) {
   const el = document.createElement("div");
   el.className = "note";
@@ -3471,7 +3506,14 @@ function renderNote(note) {
 
   const textEl = document.createElement("div");
   textEl.className = "note-text";
-  textEl.contentEditable = "true";
+  // "plaintext-only": 서식 없는 글자만 다루는 편집 모드 — 메모장처럼 줄바꿈이 <div>/<br>
+  // 대신 "\n" 글자로 들어가고, 붙여넣기도 서식이 빠진 글자만 들어온다. 이 모드를 모르는
+  // 오래된 브라우저는 대입할 때 예외를 던지므로 그땐 일반 편집 모드로 물러난다.
+  try {
+    textEl.contentEditable = "plaintext-only";
+  } catch {
+    textEl.contentEditable = "true";
+  }
   textEl.spellcheck = false;
   textEl.dataset.placeholder = "내용 입력...";
   textEl.textContent = note.text;
@@ -3482,8 +3524,28 @@ function renderNote(note) {
   textEl.addEventListener("focus", () => {
     textBeforeEdit = note.text;
   });
+  // Enter(문단 나누기)와 Shift+Enter(줄바꿈)를 둘 다 "줄바꿈 하나"로 통일한다 —
+  // 메모장엔 이 둘의 구분이 없다. 일반 편집 모드의 기본 동작에 맡기면 Chrome 은 Enter 에
+  // <div>…</div> 를, Shift+Enter 에 "\n" 이나 <br> 을 끼워넣는데, (1) <div> 는 textContent
+  // 로 읽을 때 줄바꿈이 사라져서 저장하면 줄이 합쳐지고, (2) 브라우저마다/상황마다 넣는 게
+  // 달라서 Enter 와 Shift+Enter 가 서로 다르게 동작했다. keydown 이 아니라 beforeinput 을 잡는 이유: 한글 IME 조합 중에 누른
+  // Enter 는 keydown 이 두 번 오거나(isComposing) 조합 확정과 섞여서 오는데, beforeinput 은
+  // "실제로 줄을 바꾸려는 순간"에 딱 한 번만 온다.
+  textEl.addEventListener("beforeinput", (e) => {
+    if (e.inputType === "insertParagraph" || e.inputType === "insertLineBreak") {
+      e.preventDefault();
+      document.execCommand("insertLineBreak");
+    }
+  });
+  // 붙여넣기도 서식(HTML) 없이 글자만 넣는다 — 안 그러면 복사해 온 <div>/<p>/<span style>
+  // 이 그대로 들어와서 위와 같은 줄 합쳐짐/글꼴 깨짐이 생긴다.
+  textEl.addEventListener("paste", (e) => {
+    e.preventDefault();
+    const pasted = (e.clipboardData && e.clipboardData.getData("text/plain")) || "";
+    insertPlainTextAtCaret(pasted.replace(/\r\n?/g, "\n"));
+  });
   textEl.addEventListener("input", () => {
-    note.text = textEl.textContent;
+    note.text = readEditableText(textEl);
     if (syncNoteHeightToText(note)) {
       updateHandles();
       updateAllArrowGeometry();
