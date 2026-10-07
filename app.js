@@ -1740,10 +1740,10 @@ function segmentIsClear(a, b, excludeIds) {
 
 // dagre 가 계산해준 우회 경로를 "팽팽하게 당긴다": 출발점에서부터, 다른 도형을 안
 // 가로지르고 곧장 갈 수 있는 가장 먼 경로점으로 바로 건너뛴다(그 사이의 경로점은 버린다).
-// dagre 는 순환·왕복 화살표를 다른 화살표와 안 겹치게 하려고 "필요 없을 때도" 옆으로
-// 비켜 도는 경로를 내놓는데(특히 A→B, B→A 왕복은 둘 다 꺾인 <, > 모양이 된다),
-// 실제로 가로막는 도형이 없으면 그 우회는 군더더기일 뿐이다. 진짜 막혀 있는 구간은
-// 원래 경로점을 그대로 따라가므로, 꼭 필요한 꺾임만 남는다.
+// dagre 는 왕복 화살표를 서로 안 겹치게 하려고 "필요 없을 때도" 옆으로 비켜 도는 경로를
+// 내놓는데(A→B, B→A 왕복은 둘 다 꺾인 <, > 모양이 된다), 실제로 가로막는 도형이 없으면
+// 그 꺾임은 군더더기일 뿐이다. 진짜 막혀 있는 구간은 원래 경로점을 그대로 따라간다.
+// (어떤 화살표에 쓰는지는 updateArrowGeometry 참고 — 짧은 화살표에만 쓴다.)
 function pullRouteTaut(points, excludeIds) {
   const result = [points[0]];
   let i = 0;
@@ -1840,13 +1840,19 @@ function updateArrowGeometry(arrow) {
   const toCenter = { x: to.x + to.w / 2, y: to.y + to.h / 2 };
 
   // routePoints(플로우차트 재배치/가져오기 때 dagre 가 계산해준 우회 경로 — 순환 관계
-  // 화살표가 다른 도형을 가로지르지 않게 해준다)가 있으면, 먼저 팽팽하게 당겨서 정말
-  // 필요한 경유점만 남긴다. 다 걸러지면(곧장 가도 아무것도 안 막으면) 직선이 된다.
+  // 화살표가 다른 도형을 가로지르지 않게 해준다)가 있으면 그 경로를 따른다.
+  // 단, 경유점이 하나뿐인 경로(바로 옆 단(rank)으로 가는 짧은 화살표)만은 팽팽하게
+  // 당긴다 — 왕복 화살표 한 쌍(A→B, B→A)이 둘 다 꺾인 <, > 모양이 되던 게 바로 이
+  // 경우다. 여러 단을 거슬러 올라가는 긴 재귀 화살표(경유점 2개 이상)는 당기지 않고
+  // dagre 경로 그대로 옆으로 길게 수직으로 돌아가게 둔다 — 곧장 이으면 다이어그램을
+  // 가로지르는 긴 대각선이 되는데, 실제로 써보니 그쪽이 더 어수선해 보였다.
   const route = Array.isArray(arrow.routePoints) && arrow.routePoints.length > 0 ? arrow.routePoints : null;
   let waypoints = [];
-  if (route) {
+  if (route && route.length === 1) {
     const excludeIds = new Set([arrow.fromId, arrow.toId]);
     waypoints = pullRouteTaut([fromCenter, ...route, toCenter], excludeIds).slice(1, -1);
+  } else if (route) {
+    waypoints = route;
   } else if (isGroupArrow(arrow)) {
     waypoints = groupArrowDetour(arrow, from, to, fromCenter, toCenter);
     // 왕복 그룹 화살표가 둘 다 같은 길로 돌아가면 포개지므로, 방향에 따라 서로 반대쪽으로
