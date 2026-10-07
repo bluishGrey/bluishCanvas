@@ -412,6 +412,17 @@ body {
   stroke-width: 2.5;
 }
 
+/* 그룹↔그룹 화살표: 도형 사이 화살표와 헷갈리지 않게 조금 더 굵은 점선으로 —
+   "도형 하나하나가 아니라 묶음 전체끼리의 관계"라는 걸 한눈에 구분할 수 있게. */
+.arrow.group-link .arrow-visible {
+  stroke-width: 2.5;
+  stroke-dasharray: 8 5;
+}
+
+.arrow.group-link.selected .arrow-visible {
+  stroke-width: 3;
+}
+
 /* 클릭 판정용 — 안 보이지만 훨씬 두꺼운 선. "선 위 어디를 클릭해도 선택"되게 하는
    허용 오차 역할. pointer-events:stroke 라서 이 두꺼운 선의 영역 안에서만 반응한다. */
 .arrow-hit {

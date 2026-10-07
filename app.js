@@ -1667,31 +1667,221 @@ function pointAlongPolyline(points, t) {
   return points[points.length - 1];
 }
 
-// 화살표 하나의 좌표를 현재 두 메모 위치를 기준으로 다시 계산해서 반영한다.
+// 그룹↔그룹 화살표인지. 도형 사이 화살표는 fromId/toId(도형 id), 그룹 사이 화살표는
+// fromGroupId/toGroupId(그룹 id)를 쓴다 — 같은 arrows 배열에 섞여 있어서 선택/라벨/
+// 삭제/실행취소/저장은 그대로 같이 쓰고, 끝점을 해석하는 곳만 이걸로 갈라진다.
+// fromId 를 비워두는 이유: 기존 코드 곳곳의 "a.fromId 가 이 도형(들)인가" 검사에
+// 그룹 화살표가 절대 걸리지 않게(undefined 는 어떤 도형 id 와도 같지 않다) 하기 위해서다.
+function isGroupArrow(arrow) {
+  return arrow.fromGroupId != null;
+}
+
+// 화살표 양 끝이 붙는 "상자"(도형이면 도형 자체, 그룹이면 그룹 박스를 사각형으로 본 것).
+// shapeExitPoint 가 x/y/w/h/shape 만 읽으므로 그룹 박스도 같은 함수로 윤곽 교차점을 구한다.
+function arrowEndpointBoxes(arrow) {
+  if (isGroupArrow(arrow)) {
+    const fromGroup = getGroup(arrow.fromGroupId);
+    const toGroup = getGroup(arrow.toGroupId);
+    const fromBounds = fromGroup && groupBounds(fromGroup);
+    const toBounds = toGroup && groupBounds(toGroup);
+    if (!fromBounds || !toBounds) return null;
+    return { from: { ...fromBounds, shape: "rect" }, to: { ...toBounds, shape: "rect" } };
+  }
+  const fromNote = getNote(arrow.fromId);
+  const toNote = getNote(arrow.toId);
+  if (!fromNote || !toNote) return null;
+  return { from: fromNote, to: toNote };
+}
+
+// 같은 두 끝점을 반대 방향으로 잇는 화살표(A→B 에 대한 B→A)가 있는지.
+function hasReverseTwin(arrow) {
+  if (isGroupArrow(arrow)) {
+    return arrows.some((a) => a.fromGroupId === arrow.toGroupId && a.toGroupId === arrow.fromGroupId);
+  }
+  return !!findArrowBetween(arrow.toId, arrow.fromId);
+}
+
+// 왕복 화살표 한 쌍(A→B, B→A)을 직선으로 그릴 때 두 선 사이의 간격(px). 같은 자리에
+// 겹쳐 그리면 하나로 보이므로, 각자 이만큼의 절반씩 비켜서 나란한 두 줄이 되게 한다.
+const ARROW_PAIR_GAP = 12;
+
+// 경로가 다른 도형을 "스친다"고 볼 여유(px). 도형 경계 상자를 이만큼 부풀려서 검사한다 —
+// 딱 붙어 지나가는 선은 도형 테두리와 구분이 안 돼서 가로지른 것처럼 보이기 때문이다.
+const ARROW_OBSTACLE_MARGIN = 6;
+
+// 선분 a→b 가 축에 나란한 사각형(x0..x1, y0..y1)을 지나가는지 (Liang–Barsky 클리핑).
+function segmentHitsRect(a, b, x0, y0, x1, y1) {
+  const dx = b.x - a.x;
+  const dy = b.y - a.y;
+  let t0 = 0;
+  let t1 = 1;
+  const clip = (p, q) => {
+    if (p === 0) return q >= 0; // 평행: 안쪽에 있으면 통과, 바깥이면 절대 안 만남
+    const r = q / p;
+    if (p < 0) {
+      if (r > t1) return false;
+      if (r > t0) t0 = r;
+    } else {
+      if (r < t0) return false;
+      if (r < t1) t1 = r;
+    }
+    return true;
+  };
+  return clip(-dx, a.x - x0) && clip(dx, x1 - a.x) && clip(-dy, a.y - y0) && clip(dy, y1 - a.y) && t0 <= t1;
+}
+
+// 선분 a→b 가 (excludeIds 를 뺀) 어떤 도형도 가로지르지 않는지.
+function segmentIsClear(a, b, excludeIds) {
+  const m = ARROW_OBSTACLE_MARGIN;
+  return !notes.some(
+    (n) => !excludeIds.has(n.id) && segmentHitsRect(a, b, n.x - m, n.y - m, n.x + n.w + m, n.y + n.h + m)
+  );
+}
+
+// dagre 가 계산해준 우회 경로를 "팽팽하게 당긴다": 출발점에서부터, 다른 도형을 안
+// 가로지르고 곧장 갈 수 있는 가장 먼 경로점으로 바로 건너뛴다(그 사이의 경로점은 버린다).
+// dagre 는 순환·왕복 화살표를 다른 화살표와 안 겹치게 하려고 "필요 없을 때도" 옆으로
+// 비켜 도는 경로를 내놓는데(특히 A→B, B→A 왕복은 둘 다 꺾인 <, > 모양이 된다),
+// 실제로 가로막는 도형이 없으면 그 우회는 군더더기일 뿐이다. 진짜 막혀 있는 구간은
+// 원래 경로점을 그대로 따라가므로, 꼭 필요한 꺾임만 남는다.
+function pullRouteTaut(points, excludeIds) {
+  const result = [points[0]];
+  let i = 0;
+  while (i < points.length - 1) {
+    let next = i + 1; // 원래 경로의 다음 점은 (막혀 있더라도) 항상 갈 수 있다고 본다
+    for (let j = points.length - 1; j > i + 1; j--) {
+      if (segmentIsClear(points[i], points[j], excludeIds)) {
+        next = j;
+        break;
+      }
+    }
+    result.push(points[next]);
+    i = next;
+  }
+  return result;
+}
+
+// 그룹↔그룹 화살표가 피해 가야 하는 상자들: 양 끝 그룹을 뺀 나머지 그룹 박스, 그리고
+// 어느 그룹에도 안 속한 낱개 도형. (양 끝 그룹 안의 도형은 화살표가 어차피 그 그룹 박스
+// 테두리에서 시작/끝나므로 장애물이 아니다.)
+function groupArrowObstacles(arrow) {
+  const m = ARROW_OBSTACLE_MARGIN;
+  const boxes = [];
+  groups.forEach((group) => {
+    if (group.id === arrow.fromGroupId || group.id === arrow.toGroupId) return;
+    const b = groupBounds(group);
+    if (b) boxes.push({ x0: b.x - m, y0: b.y - m, x1: b.x + b.w + m, y1: b.y + b.h + m });
+  });
+  notes.forEach((n) => {
+    if (groupOfNote(n.id)) return;
+    boxes.push({ x0: n.x - m, y0: n.y - m, x1: n.x + n.w + m, y1: n.y + n.h + m });
+  });
+  return boxes;
+}
+
+// 그룹 박스 바깥으로 돌아가는 우회 경로가 장애물과 떨어지는 거리(px).
+const GROUP_ARROW_DETOUR_GAP = 24;
+
+// 그룹↔그룹 화살표가 곧장 가면 다른 그룹(이나 낱개 도형)을 뚫고 지나갈 때, 위/아래/
+// 왼쪽/오른쪽 중 한 쪽으로 크게 돌아가는 경유점 두 개를 돌려준다(ㄷ자 모양). 네 후보 중
+// 아무것도 안 가로지르는 것 가운데 가장 짧은 것을 고르고, 곧장 가도 괜찮거나 깨끗한
+// 후보가 하나도 없으면 빈 배열(= 직선)을 돌려준다. 도형 화살표처럼 dagre 경로가 없어서
+// (재배치는 그룹 사이 관계를 모른다) 그룹 화살표만 이렇게 단순한 우회를 직접 계산한다.
+function groupArrowDetour(arrow, from, to, fromCenter, toCenter) {
+  const obstacles = groupArrowObstacles(arrow);
+  const clear = (pts) =>
+    pts.every((pt, i) => i === 0 || !obstacles.some((o) => segmentHitsRect(pts[i - 1], pt, o.x0, o.y0, o.x1, o.y1)));
+  if (clear([fromCenter, toCenter])) return [];
+
+  const gap = GROUP_ARROW_DETOUR_GAP;
+  // 우회선이 장애물 전체와 양 끝 그룹 바깥을 지나도록 기준선을 잡는다.
+  const blocking = obstacles.filter((o) => segmentHitsRect(fromCenter, toCenter, o.x0, o.y0, o.x1, o.y1));
+  const ends = [
+    { x0: from.x, y0: from.y, x1: from.x + from.w, y1: from.y + from.h },
+    { x0: to.x, y0: to.y, x1: to.x + to.w, y1: to.y + to.h },
+  ];
+  const span = [...blocking, ...ends];
+  const top = Math.min(...span.map((o) => o.y0)) - gap;
+  const bottom = Math.max(...span.map((o) => o.y1)) + gap;
+  const left = Math.min(...span.map((o) => o.x0)) - gap;
+  const right = Math.max(...span.map((o) => o.x1)) + gap;
+  const candidates = [
+    [{ x: fromCenter.x, y: top }, { x: toCenter.x, y: top }],
+    [{ x: fromCenter.x, y: bottom }, { x: toCenter.x, y: bottom }],
+    [{ x: left, y: fromCenter.y }, { x: left, y: toCenter.y }],
+    [{ x: right, y: fromCenter.y }, { x: right, y: toCenter.y }],
+  ];
+  const length = (pts) => pts.reduce((sum, pt, i) => (i === 0 ? 0 : sum + Math.hypot(pt.x - pts[i - 1].x, pt.y - pts[i - 1].y)), 0);
+  let best = null;
+  let bestLen = Infinity;
+  candidates.forEach((wps) => {
+    const pts = [fromCenter, ...wps, toCenter];
+    if (!clear(pts)) return;
+    const len = length(pts);
+    if (len < bestLen) {
+      bestLen = len;
+      best = wps;
+    }
+  });
+  return best || [];
+}
+
+// 화살표 하나의 좌표를 현재 두 끝점(도형 또는 그룹) 위치를 기준으로 다시 계산해서 반영한다.
 // (정확한 진입/이탈 지점은 저장하지 않고, 메모가 움직이거나 크기가 바뀔 때마다 항상
 // 새로 계산한다 — arrow.routePoints 는 그 사이를 지나는 중간 경로점만 저장한다)
 function updateArrowGeometry(arrow) {
   const g = arrowEl(arrow.id);
   if (!g) return;
-  const fromNote = getNote(arrow.fromId);
-  const toNote = getNote(arrow.toId);
-  if (!fromNote || !toNote) return;
+  const boxes = arrowEndpointBoxes(arrow);
+  if (!boxes) return;
+  const { from, to } = boxes;
 
-  const fromCenter = { x: fromNote.x + fromNote.w / 2, y: fromNote.y + fromNote.h / 2 };
-  const toCenter = { x: toNote.x + toNote.w / 2, y: toNote.y + toNote.h / 2 };
+  const fromCenter = { x: from.x + from.w / 2, y: from.y + from.h / 2 };
+  const toCenter = { x: to.x + to.w / 2, y: to.y + to.h / 2 };
 
-  // routePoints 가 있으면(플로우차트 재배치/가져오기 때 dagre 가 계산해준 우회 경로 —
-  // 순환 관계 화살표가 다른 도형을 대각선으로 가로지르지 않게 해준다) 상대 도형의
-  // 중심이 아니라 그 경로의 첫/마지막 점을 향해 빠져나가게 한다.
+  // routePoints(플로우차트 재배치/가져오기 때 dagre 가 계산해준 우회 경로 — 순환 관계
+  // 화살표가 다른 도형을 가로지르지 않게 해준다)가 있으면, 먼저 팽팽하게 당겨서 정말
+  // 필요한 경유점만 남긴다. 다 걸러지면(곧장 가도 아무것도 안 막으면) 직선이 된다.
   const route = Array.isArray(arrow.routePoints) && arrow.routePoints.length > 0 ? arrow.routePoints : null;
-  const p1 = route ? shapeExitPoint(fromNote, route[0].x, route[0].y) : shapeExitPoint(fromNote, toCenter.x, toCenter.y);
-  const p2 = route
-    ? shapeExitPoint(toNote, route[route.length - 1].x, route[route.length - 1].y)
-    : shapeExitPoint(toNote, fromCenter.x, fromCenter.y);
-  // 실제 도형 진입/이탈 지점(p1/p2)은 매번 다시 계산되므로 dagre 의 경로점과 정확히
-  // 일직선은 아닐 수 있다 — 그래서 단순화는 p1/p2 를 포함한 전체 목록에 대해 한다
-  // (양 끝 점은 simplifyRoutePoints 가 항상 그대로 남긴다).
-  const pathPoints = simplifyRoutePoints(route ? [p1, ...route, p2] : [p1, p2]);
+  let waypoints = [];
+  if (route) {
+    const excludeIds = new Set([arrow.fromId, arrow.toId]);
+    waypoints = pullRouteTaut([fromCenter, ...route, toCenter], excludeIds).slice(1, -1);
+  } else if (isGroupArrow(arrow)) {
+    waypoints = groupArrowDetour(arrow, from, to, fromCenter, toCenter);
+    // 왕복 그룹 화살표가 둘 다 같은 길로 돌아가면 포개지므로, 방향에 따라 서로 반대쪽으로
+    // 살짝 비킨다(가로·세로 구간이 다 갈라지도록 대각선 방향으로).
+    if (waypoints.length > 0 && hasReverseTwin(arrow)) {
+      const shift = (arrow.fromGroupId < arrow.toGroupId ? 1 : -1) * (ARROW_PAIR_GAP / 2);
+      waypoints = waypoints.map((pt) => ({ x: pt.x + shift, y: pt.y + shift }));
+    }
+  }
+
+  let pathPoints;
+  if (waypoints.length > 0) {
+    // 경유점이 남았으면 도형에서 빠져나가는/들어오는 지점도 상대 도형의 중심이 아니라
+    // 첫/마지막 경유점을 향하게 한다.
+    const p1 = shapeExitPoint(from, waypoints[0].x, waypoints[0].y);
+    const p2 = shapeExitPoint(to, waypoints[waypoints.length - 1].x, waypoints[waypoints.length - 1].y);
+    // 실제 도형 진입/이탈 지점(p1/p2)은 매번 다시 계산되므로 dagre 의 경로점과 정확히
+    // 일직선은 아닐 수 있다 — 그래서 단순화는 p1/p2 를 포함한 전체 목록에 대해 한다
+    // (양 끝 점은 simplifyRoutePoints 가 항상 그대로 남긴다).
+    pathPoints = simplifyRoutePoints([p1, ...waypoints, p2]);
+  } else {
+    let p1 = shapeExitPoint(from, toCenter.x, toCenter.y);
+    let p2 = shapeExitPoint(to, fromCenter.x, fromCenter.y);
+    // 왕복 화살표 한 쌍은 같은 직선 위에 포개지므로, 진행 방향에 수직으로 반 칸씩
+    // 비켜서 나란한 두 줄로 그린다(방향이 반대라 둘은 저절로 서로 반대편으로 비켜난다).
+    const len = Math.hypot(toCenter.x - fromCenter.x, toCenter.y - fromCenter.y);
+    if (len > 0 && hasReverseTwin(arrow)) {
+      const shift = ARROW_PAIR_GAP / 2;
+      const nx = ((toCenter.y - fromCenter.y) / len) * shift;
+      const ny = (-(toCenter.x - fromCenter.x) / len) * shift;
+      p1 = { x: p1.x + nx, y: p1.y + ny };
+      p2 = { x: p2.x + nx, y: p2.y + ny };
+    }
+    pathPoints = [p1, p2];
+  }
   const d = polylinePathD(pathPoints);
 
   ["arrow-hit", "arrow-visible"].forEach((cls) => {
@@ -1786,7 +1976,8 @@ function arrowMidpointWorld(arrow) {
 
 function renderArrow(arrow) {
   const g = document.createElementNS(SVG_NS, "g");
-  g.setAttribute("class", "arrow");
+  // 그룹↔그룹 화살표는 도형 사이 화살표와 구분되게 굵은 점선으로 그린다(styles.css).
+  g.setAttribute("class", isGroupArrow(arrow) ? "arrow group-link" : "arrow");
   g.dataset.id = String(arrow.id);
 
   // <line> 이 아니라 <path> 를 쓴다 — routePoints(dagre 가 순환 관계 등에 계산해준
@@ -1959,12 +2150,45 @@ function createArrow(fromId, toId) {
   const arrow = { id: nextArrowId++, fromId, toId };
   arrows.push(arrow);
   renderArrow(arrow);
+  // 반대 방향 짝(B→A)이 이미 있었다면 그 화살표도 이제 나란히 비켜 그려져야 한다.
+  const twin = findArrowBetween(toId, fromId);
+  if (twin) updateArrowGeometry(twin);
   // 새 화살표가 마인드맵 그룹의 트리 구조(누가 몇 번째 가지인지)를 바꿀 수 있으므로
   // 다시 그린다 — renderGroups() 는 박스 자체는 바뀔 게 없어도(도형 위치/크기는
   // 그대로라) 가지별 색상(refreshMindmapBranchColors)까지 함께 다시 계산해준다.
   renderGroups();
   commitChange();
   return arrow;
+}
+
+// 같은 방향으로 이미 이어진 그룹↔그룹 화살표 (findArrowBetween 의 그룹 버전).
+function findGroupArrowBetween(fromGroupId, toGroupId) {
+  return arrows.find((a) => a.fromGroupId === fromGroupId && a.toGroupId === toGroupId) || null;
+}
+
+// 그룹↔그룹 화살표를 만든다. 도형 사이 화살표(createArrow)와 같은 규칙 — 자기 자신,
+// 같은 방향 중복은 막는다. 반대 방향은 별개의 관계라 허용한다(나란한 두 줄로 그려진다).
+function createGroupArrow(fromGroupId, toGroupId) {
+  if (fromGroupId === toGroupId) return null;
+  if (findGroupArrowBetween(fromGroupId, toGroupId)) return null;
+  const arrow = { id: nextArrowId++, fromGroupId, toGroupId };
+  arrows.push(arrow);
+  renderArrow(arrow);
+  // 반대 방향 짝(B→A)이 이미 있었다면 그 화살표도 이제 나란히 비켜 그려져야 한다.
+  const twin = findGroupArrowBetween(toGroupId, fromGroupId);
+  if (twin) updateArrowGeometry(twin);
+  commitChange();
+  return arrow;
+}
+
+// 끝점 그룹이 사라진(해제·멤버 전부 삭제·올가미로 합쳐짐 등) 그룹↔그룹 화살표를 치운다.
+// 그룹이 없어지는 경로가 여러 곳이라, 그룹 구조가 바뀔 때마다 항상 불리는
+// renderGroups() 에서 한 번에 정리한다.
+function pruneOrphanGroupArrows() {
+  arrows
+    .filter((a) => isGroupArrow(a) && (!getGroup(a.fromGroupId) || !getGroup(a.toGroupId)))
+    .map((a) => a.id)
+    .forEach(removeArrowFromState);
 }
 
 function removeArrowFromState(id) {
@@ -1980,6 +2204,7 @@ function removeArrowFromState(id) {
 function deleteArrow(id) {
   removeArrowFromState(id);
   renderGroups(); // createArrow 와 같은 이유 — 마인드맵 가지 색 재계산
+  updateAllArrowGeometry(); // 왕복 짝이 사라졌으면 남은 쪽은 다시 가운데 직선으로
   commitChange();
 }
 
@@ -2086,18 +2311,33 @@ function deleteSelectedObjects() {
   Array.from(selectedIds).forEach(removeNoteFromState); // 메모에 딸린 화살표도 같이 지워진다
   Array.from(selectedArrowIds).forEach(removeArrowFromState);
   renderGroups(); // 지운 메모가 그룹에서 빠졌으니 박스를 다시 그린다
+  updateAllArrowGeometry(); // 왕복 짝 중 하나만 지웠으면 남은 쪽은 다시 가운데 직선으로
   updateHandles(); // 선택이 비었으니 경계 상자/핸들/버튼도 같이 감춘다
   commitChange();
 }
 
-/* ===== 화살표 연결 모드 (메모 우클릭으로 시작) ===== */
+/* ===== 화살표 연결 모드 (메모 우클릭, 또는 그룹 우클릭 메뉴의 "다른 그룹과 연결"로 시작) =====
+ * arrowDraft 는 도형에서 시작했으면 { fromId }, 그룹에서 시작했으면 { fromGroupId } 다.
+ * 도형에서 시작한 연결은 도형에, 그룹에서 시작한 연결은 그룹에 이어진다. */
 
-function startArrowDraft(fromId) {
-  arrowDraft = { fromId };
+// 연결 미리보기 선이 나오는 상자(도형이면 도형, 그룹이면 그룹 박스). 그 사이에
+// 출발점이 사라졌으면 null.
+function arrowDraftSourceBox() {
+  if (!arrowDraft) return null;
+  if (arrowDraft.fromGroupId != null) {
+    const group = getGroup(arrowDraft.fromGroupId);
+    const bounds = group && groupBounds(group);
+    return bounds ? { ...bounds, shape: "rect" } : null;
+  }
+  return getNote(arrowDraft.fromId) || null;
+}
+
+function startArrowDraftFrom(draft) {
+  arrowDraft = draft;
   canvas.classList.add("linking");
-  const fromNote = getNote(fromId);
-  if (fromNote) {
-    const c = { x: fromNote.x + fromNote.w / 2, y: fromNote.y + fromNote.h / 2 };
+  const box = arrowDraftSourceBox();
+  if (box) {
+    const c = { x: box.x + box.w / 2, y: box.y + box.h / 2 };
     arrowDraftEl.setAttribute("x1", c.x);
     arrowDraftEl.setAttribute("y1", c.y);
     arrowDraftEl.setAttribute("x2", c.x);
@@ -2108,15 +2348,23 @@ function startArrowDraft(fromId) {
   arrowDraftEl.removeAttribute("hidden");
 }
 
+function startArrowDraft(fromId) {
+  startArrowDraftFrom({ fromId });
+}
+
+function startGroupArrowDraft(fromGroupId) {
+  startArrowDraftFrom({ fromGroupId });
+}
+
 function updateArrowDraft(worldPt) {
   if (!arrowDraft) return;
-  const fromNote = getNote(arrowDraft.fromId);
-  if (!fromNote) {
+  const box = arrowDraftSourceBox();
+  if (!box) {
     cancelArrowDraft();
     return;
   }
   // 커서 방향으로 도형 윤곽과 만나는 지점에서 선이 나오도록, 매번 다시 계산한다.
-  const p1 = shapeExitPoint(fromNote, worldPt.x, worldPt.y);
+  const p1 = shapeExitPoint(box, worldPt.x, worldPt.y);
   arrowDraftEl.setAttribute("x1", p1.x);
   arrowDraftEl.setAttribute("y1", p1.y);
   arrowDraftEl.setAttribute("x2", worldPt.x);
@@ -2129,8 +2377,20 @@ function cancelArrowDraft() {
   arrowDraftEl.setAttribute("hidden", "");
 }
 
+// 연결 모드 중에 도형을 눌렀을 때. 그룹에서 시작한 연결이면 그 도형이 속한 그룹을
+// 대상으로 삼는다(그룹 안 어디를 눌러도 그 그룹으로 이어지게).
 function completeArrowDraft(toId, clientX, clientY) {
   if (!arrowDraft) return;
+  if (arrowDraft.fromGroupId != null) {
+    const group = groupOfNote(toId);
+    if (!group) {
+      cancelArrowDraft();
+      if (clientX !== undefined) showCanvasNotice(clientX, clientY, "그룹에 속한 도형이 아니라 연결할 수 없습니다");
+      return;
+    }
+    completeGroupArrowDraft(group.id, clientX, clientY);
+    return;
+  }
   const fromId = arrowDraft.fromId;
   cancelArrowDraft();
   if (fromId === toId) return; // 자기 자신에게는 연결하지 않는다
@@ -2143,6 +2403,22 @@ function completeArrowDraft(toId, clientX, clientY) {
     return;
   }
   createArrow(fromId, toId);
+}
+
+// 그룹에서 시작한 연결을 groupId 그룹으로 마무리한다. 도형에서 시작한 연결 중에
+// 그룹(이름표/배경)을 누른 거라면 도형↔그룹 연결은 없으므로 그냥 취소한다.
+function completeGroupArrowDraft(toGroupId, clientX, clientY) {
+  if (!arrowDraft) return;
+  const fromGroupId = arrowDraft.fromGroupId;
+  cancelArrowDraft();
+  if (fromGroupId == null || fromGroupId === toGroupId) return;
+  if (findGroupArrowBetween(fromGroupId, toGroupId)) {
+    if (clientX !== undefined && clientY !== undefined) {
+      showCanvasNotice(clientX, clientY, "이미 연결된 그룹입니다");
+    }
+    return;
+  }
+  createGroupArrow(fromGroupId, toGroupId);
 }
 
 document.addEventListener("mousemove", (e) => {
@@ -2663,6 +2939,17 @@ function addNotesToGroup(noteIds, targetGroupId, force = false) {
   });
 }
 
+// 월드 좌표 한 점을 감싸는 그룹 (잠긴 그룹 포함 — 그룹끼리 화살표로 잇는 건 잠금과
+// 무관하다. 도형을 넣는 쪽은 아래 groupAtWorldPoint 를 쓴다).
+function groupContainingWorldPoint(point) {
+  return (
+    groups.find((group) => {
+      const b = groupBounds(group);
+      return b && point.x >= b.x && point.x <= b.x + b.w && point.y >= b.y && point.y <= b.y + b.h;
+    }) || null
+  );
+}
+
 // 월드 좌표 한 점이 어느 그룹의 박스 영역 안에 있는지 (잠긴 그룹은 후보에서 제외 —
 // 새 도형이든 드래그로 옮기는 도형이든 잠긴 그룹에는 넣을 수 없으므로).
 function groupAtWorldPoint(point) {
@@ -2894,6 +3181,7 @@ function updateGroupBoxGeometry() {
 // 그룹 박스를 전부 다시 만든다. 그룹이 생기거나 없어지거나 이름/타입이 바뀔 때처럼
 // 구조가 실제로 달라졌을 때만 쓴다.
 function renderGroups() {
+  pruneOrphanGroupArrows();
   groupsLayerEl.innerHTML = "";
   groups.forEach((group) => {
     const bounds = groupBounds(group);
@@ -2929,6 +3217,14 @@ function renderGroups() {
     label.addEventListener("mousedown", (e) => {
       if (e.button !== 0) return;
       e.stopPropagation(); // 캔버스 빈 곳 드래그(사각형 선택)로 안 번지게
+
+      // 연결 모드 중이면 이 이름표는 "선택/이동 대상"이 아니라 "연결 끝점"이다.
+      if (arrowDraft) {
+        e.preventDefault();
+        if (arrowDraft.fromGroupId != null) completeGroupArrowDraft(group.id, e.clientX, e.clientY);
+        else cancelArrowDraft();
+        return;
+      }
 
       const canDrag = !group.locked;
       const startPositions = group.noteIds
@@ -3019,6 +3315,10 @@ function renderGroups() {
 
   updateNoteGroupUI();
   refreshMindmapBranchColors();
+  // 멤버가 늘거나 줄면 그룹 박스 크기가 바뀌므로, 그룹↔그룹 화살표 끝점도 다시 맞춘다.
+  arrows.forEach((a) => {
+    if (isGroupArrow(a)) updateArrowGeometry(a);
+  });
 }
 
 // 각 메모의 "그룹에서 빼기"(−) 버튼을 지금 그룹 소속 상태에 맞게 보이기/숨기기/
@@ -3267,6 +3567,9 @@ groupContextMenuEl.addEventListener("click", (e) => {
   switch (btn.dataset.action) {
     case "select-all":
       selectGroupMembers(groupId);
+      break;
+    case "link-group":
+      startGroupArrowDraft(groupId);
       break;
     case "rename": {
       const nameEl = groupsLayerEl.querySelector(`.group-box[data-id="${groupId}"] .group-name`);
@@ -4096,6 +4399,15 @@ canvas.addEventListener("mousedown", (e) => {
 // 화살표 연결 모드 중이라면, 선택 해제 대신 연결을 취소한다.
 canvas.addEventListener("click", (e) => {
   if (arrowDraft) {
+    // 그룹에서 시작한 연결이면, 다른 그룹의 배경(도형 사이 빈 곳)을 눌러도 그 그룹으로
+    // 이어준다 — 그룹 박스는 pointer-events:none 이라 그 클릭은 캔버스로 바로 온다.
+    if (arrowDraft.fromGroupId != null) {
+      const target = groupContainingWorldPoint(screenToWorld(e.clientX, e.clientY));
+      if (target) {
+        completeGroupArrowDraft(target.id, e.clientX, e.clientY);
+        return;
+      }
+    }
     cancelArrowDraft();
     return;
   }
@@ -4488,14 +4800,17 @@ function generateMermaid() {
     );
   }
 
-  const droppedByUnset = arrows.filter(
+  // 그룹↔그룹 화살표는 끝점이 도형이 아니라서 아래 두 검사(도형 타입 기준)에서 빼고,
+  // 플로우차트 블록에서 따로 다룬다.
+  const noteArrows = arrows.filter((a) => !isGroupArrow(a));
+  const droppedByUnset = noteArrows.filter(
     (a) => !isExportableType(typeOfNote(a.fromId)) || !isExportableType(typeOfNote(a.toId))
   );
   if (droppedByUnset.length > 0) {
     warnings.push(`미지정 도형에 연결된 화살표 ${droppedByUnset.length}개도 함께 제외했습니다.`);
   }
 
-  const crossTypeArrows = arrows.filter((a) => {
+  const crossTypeArrows = noteArrows.filter((a) => {
     const from = typeOfNote(a.fromId);
     const to = typeOfNote(a.toId);
     return isExportableType(from) && isExportableType(to) && from !== to;
@@ -4506,15 +4821,32 @@ function generateMermaid() {
     );
   }
 
+  // 그룹↔그룹 화살표는 양쪽 그룹이 모두 플로우차트 subgraph 로 나갈 때만 담을 수 있다
+  // (마인드맵 문법에는 그룹 사이를 잇는 표현이 없다).
+  const isFlowchartGroup = (groupId) => {
+    const group = getGroup(groupId);
+    return !!group && group.noteIds.some((id) => typeOfNote(id) === "flowchart");
+  };
+  const droppedGroupArrows = arrows.filter(
+    (a) => isGroupArrow(a) && (!isFlowchartGroup(a.fromGroupId) || !isFlowchartGroup(a.toGroupId))
+  );
+  if (droppedGroupArrows.length > 0) {
+    warnings.push(
+      `마인드맵 그룹에 이어진 그룹 연결 ${droppedGroupArrows.length}개를 제외했습니다. 그룹 사이 연결은 플로우차트 그룹끼리만 Mermaid 로 표현할 수 있습니다.`
+    );
+  }
+
   // --- 플로우차트 블록 (그룹은 subgraph, 그룹 밖 도형은 그대로) ---
   const flowNotes = notes.filter((n) => n.diagramType === "flowchart");
   if (flowNotes.length > 0) {
     const lines = ["flowchart TD"];
     const emitted = new Set();
+    const emittedSubgraphIds = new Set();
 
     groups.forEach((group) => {
       const members = group.noteIds.map(getNote).filter((n) => n && n.diagramType === "flowchart");
       if (members.length === 0) return;
+      emittedSubgraphIds.add(group.id);
       lines.push(`${MERMAID_INDENT}subgraph ${group.id}["${escapeMermaidLabel(group.name)}"]`);
       members.forEach((note) => {
         lines.push(`${MERMAID_INDENT}${MERMAID_INDENT}${flowchartNodeLine(note)}`);
@@ -4530,10 +4862,20 @@ function generateMermaid() {
 
     // 화살표는 subgraph 블록이 모두 끝난 뒤에 선언한다 — 그래야 그룹을 가로지르는
     // 연결도 문제없이 표현된다.
+    // 그룹↔그룹 화살표는 subgraph id 끼리 잇는다 — Mermaid flowchart 는 subgraph 를
+    // 화살표 끝점으로 쓰는 문법(`g1 --> g3`)을 그대로 지원한다.
     arrows.forEach((arrow) => {
-      if (typeOfNote(arrow.fromId) !== "flowchart" || typeOfNote(arrow.toId) !== "flowchart") return;
-      const from = mermaidNodeId(arrow.fromId);
-      const to = mermaidNodeId(arrow.toId);
+      let from;
+      let to;
+      if (isGroupArrow(arrow)) {
+        if (!emittedSubgraphIds.has(arrow.fromGroupId) || !emittedSubgraphIds.has(arrow.toGroupId)) return;
+        from = arrow.fromGroupId;
+        to = arrow.toGroupId;
+      } else {
+        if (typeOfNote(arrow.fromId) !== "flowchart" || typeOfNote(arrow.toId) !== "flowchart") return;
+        from = mermaidNodeId(arrow.fromId);
+        to = mermaidNodeId(arrow.toId);
+      }
       const label = (arrow.label || "").trim();
       lines.push(
         label
@@ -4917,10 +5259,14 @@ function parseFlowchartBlock(block) {
     // id 부분(대괄호 앞)도 영문/숫자로 제한하지 않는다 — 위 readId/parseMindmapNodeToken 과
     // 같은 이유로, "subgraph 준비["준비 단계"]" 처럼 한글 id 를 쓴 경우도 대괄호 안의
     // "준비 단계"만 이름으로 정확히 뽑아내야 한다(공백/대괄호/따옴표만 피하면 id로 허용).
-    const sgMatch = trimmed.match(/^subgraph\s+(?:[^\s[\]"]+\s*\[\s*"?([^"\]]*)"?\s*\]|"([^"]+)"|(.+))$/i);
+    // subgraph 의 id(대괄호 앞 부분, 또는 "subgraph 이름" 처럼 이름만 쓴 경우 그 이름)도
+    // 같이 기억해둔다 — `g1 --> g3` 처럼 subgraph 끼리 잇는 화살표를 그룹↔그룹 연결로
+    // 되돌리려면 화살표 끝점이 어느 subgraph 인지 알아야 한다.
+    const sgMatch = trimmed.match(/^subgraph\s+(?:([^\s[\]"]+)\s*\[\s*"?([^"\]]*)"?\s*\]|"([^"]+)"|(.+))$/i);
     if (sgMatch) {
-      const name = (sgMatch[1] || sgMatch[2] || sgMatch[3] || "").trim() || "그룹";
-      stack.push({ name, nodeIds: [] });
+      const name = (sgMatch[2] || sgMatch[3] || sgMatch[4] || "").trim() || "그룹";
+      const sgId = sgMatch[1] || (sgMatch[4] ? sgMatch[4].trim() : null);
+      stack.push({ id: sgId, name, nodeIds: [] });
       return;
     }
 
@@ -4939,7 +5285,31 @@ function parseFlowchartBlock(block) {
     if (closed.nodeIds.length > 0) finishedSubgraphs.push(closed);
   }
 
-  return { type: "flowchart", direction, nodes, edges, subgraphs: finishedSubgraphs, skippedLines };
+  // 끝점이 subgraph id 인 화살표는 도형 사이 화살표가 아니라 그룹↔그룹 연결이다.
+  // 줄 단위 스캐너(tokenizeFlowchartLine)는 그 id 를 도형으로 알고 upsertNode 로 이미
+  // 만들어 뒀으므로, 모양 정의 없이 화살표에만 등장한 그런 "가짜 도형"을 걷어낸다
+  // (안 그러면 그룹 이름과 같은 글자의 빈 도형이 생기고, dagre 배치도 엉뚱해진다).
+  const subgraphIds = new Set(finishedSubgraphs.map((sg) => sg.id).filter(Boolean));
+  const isSubgraphRef = (id) => subgraphIds.has(id) && nodes.has(id) && !nodes.get(id).shape;
+  const groupEdges = edges.filter((e) => isSubgraphRef(e.from) && isSubgraphRef(e.to));
+  const nodeEdges = edges.filter((e) => !isSubgraphRef(e.from) && !isSubgraphRef(e.to));
+  subgraphIds.forEach((id) => {
+    if (!isSubgraphRef(id)) return;
+    nodes.delete(id);
+    finishedSubgraphs.forEach((sg) => {
+      sg.nodeIds = sg.nodeIds.filter((nid) => nid !== id);
+    });
+  });
+
+  return {
+    type: "flowchart",
+    direction,
+    nodes,
+    edges: nodeEdges,
+    groupEdges,
+    subgraphs: finishedSubgraphs.filter((sg) => sg.nodeIds.length > 0),
+    skippedLines,
+  };
 }
 
 // 마인드맵 노드 한 줄(들여쓰기 제거된 상태)을 도형+라벨로 바꾼다. 마인드맵 문법엔 마름모가
@@ -5514,12 +5884,25 @@ function importMermaidText(text) {
       // 이 블록 하나를 대표하는 새 그룹으로 따로 묶는다 — 블록 안에 뭐가 있든 결과적으로
       // 전부 어떤 그룹의 멤버가 된다.
       const groupedIds = new Set();
+      const groupIdBySubgraphId = new Map();
       block.subgraphs.forEach((sg) => {
         const noteIds = sg.nodeIds.map((mid) => idMap.get(`${idx}:${mid}`)).filter((id) => id != null);
         if (noteIds.length === 0) return;
         const gid = localNextGroupId++;
         newGroups.push({ id: `g${gid}`, name: sg.name || `그룹 ${gid}`, noteIds, locked: false });
+        if (sg.id) groupIdBySubgraphId.set(sg.id, `g${gid}`);
         noteIds.forEach((id) => groupedIds.add(id));
+      });
+
+      // subgraph 끼리 이은 화살표 → 그룹↔그룹 연결.
+      (block.groupEdges || []).forEach((e) => {
+        const fromGroupId = groupIdBySubgraphId.get(e.from);
+        const toGroupId = groupIdBySubgraphId.get(e.to);
+        if (!fromGroupId || !toGroupId || fromGroupId === toGroupId) return;
+        if (newArrows.some((a) => a.fromGroupId === fromGroupId && a.toGroupId === toGroupId)) return;
+        const arrow = { id: localNextArrowId++, fromGroupId, toGroupId };
+        if (e.label) arrow.label = e.label;
+        newArrows.push(arrow);
       });
 
       const looseIds = [...block.nodes.keys()]
