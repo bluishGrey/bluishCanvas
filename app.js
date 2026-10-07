@@ -1761,6 +1761,51 @@ function pullRouteTaut(points, excludeIds) {
   return result;
 }
 
+// 경유점 허용 오차(px) — 경유점이 두 끝점 중심이 이루는 범위를 이만큼까지는 벗어나도
+// "사이에 있다"고 본다(dagre 좌표의 소수점 오차, 도형 크기 차이 정도는 봐준다).
+const ROUTE_DETOUR_TOLERANCE = 4;
+
+// 짧은 화살표(경유점 1개)의 그 경유점이 "튀어나간 군더더기 꺾임"인지.
+// 두 끝점 중심이 이루는 범위 안에 있으면(예: 위 도형에서 비스듬히 내려오다가 아래
+// 도형 바로 위에서 수직으로 꺾여 들어가는 모양) 보기 좋은 꺾임이라 그대로 두고,
+// 범위 밖으로 튀어나갔다가 되돌아오면(왕복 화살표가 그리던 <, > 모양처럼) 군더더기라
+// 팽팽하게 당긴다. (왕복 쌍은 이 판정과 무관하게 항상 나란한 두 직선으로 그린다.)
+function isDetourWaypoint(pt, a, b) {
+  const t = ROUTE_DETOUR_TOLERANCE;
+  return (
+    pt.x < Math.min(a.x, b.x) - t ||
+    pt.x > Math.max(a.x, b.x) + t ||
+    pt.y < Math.min(a.y, b.y) - t ||
+    pt.y > Math.max(a.y, b.y) + t
+  );
+}
+
+// 왕복 화살표 쌍(A↔B)이 위아래로 이웃하면서 좌우로 어긋나 있을 때, 한쪽짜리 화살표가
+// dagre 경로로 그려질 때와 같은 모양 — 위 도형에서 비스듬히 내려오다가 아래 도형 바로
+// 위에서 수직으로 꺾여 들어가는 모양 — 을 두 줄 나란히 그린 경로를 돌려준다. 두 줄은
+// 방향(내려가는지/올라가는지)에 따라 좌우로 반 칸씩 비켜서 겹치지 않는다. 좌우로 거의
+// 안 어긋났거나(그럼 그냥 나란한 직선이 깔끔하다), 위아래보다 좌우로 더 떨어져 있거나,
+// 그 길이 다른 도형에 막히면 null — 호출한 쪽이 나란한 직선으로 그린다.
+function twinBentPath(arrow, from, to, fromCenter, toCenter) {
+  const dx = toCenter.x - fromCenter.x;
+  const dy = toCenter.y - fromCenter.y;
+  if (Math.abs(dx) <= ROUTE_DETOUR_TOLERANCE * 2 || Math.abs(dy) <= Math.abs(dx)) return null;
+
+  const goingDown = dy > 0;
+  const upper = goingDown ? from : to;
+  const lower = goingDown ? to : from;
+  const bend = { x: lower.x + lower.w / 2, y: (upper.y + upper.h + lower.y) / 2 };
+  if (!(bend.y > upper.y + upper.h && bend.y < lower.y)) return null; // 위아래로 겹쳐 있으면 꺾을 자리가 없다
+
+  const excludeIds = new Set([arrow.fromId, arrow.toId]);
+  if (!segmentIsClear(fromCenter, bend, excludeIds) || !segmentIsClear(bend, toCenter, excludeIds)) return null;
+
+  const shift = (goingDown ? 1 : -1) * (ARROW_PAIR_GAP / 2);
+  const p1 = shapeExitPoint(from, bend.x, bend.y);
+  const p2 = shapeExitPoint(to, bend.x, bend.y);
+  return [p1, bend, p2].map((pt) => ({ x: pt.x + shift, y: pt.y }));
+}
+
 // 그룹↔그룹 화살표가 피해 가야 하는 상자들: 양 끝 그룹을 뺀 나머지 그룹 박스, 그리고
 // 어느 그룹에도 안 속한 낱개 도형. (양 끝 그룹 안의 도형은 화살표가 어차피 그 그룹 박스
 // 테두리에서 시작/끝나므로 장애물이 아니다.)
@@ -1841,14 +1886,13 @@ function updateArrowGeometry(arrow) {
 
   // routePoints(플로우차트 재배치/가져오기 때 dagre 가 계산해준 우회 경로 — 순환 관계
   // 화살표가 다른 도형을 가로지르지 않게 해준다)가 있으면 그 경로를 따른다.
-  // 단, 경유점이 하나뿐인 경로(바로 옆 단(rank)으로 가는 짧은 화살표)만은 팽팽하게
-  // 당긴다 — 왕복 화살표 한 쌍(A→B, B→A)이 둘 다 꺾인 <, > 모양이 되던 게 바로 이
-  // 경우다. 여러 단을 거슬러 올라가는 긴 재귀 화살표(경유점 2개 이상)는 당기지 않고
-  // dagre 경로 그대로 옆으로 길게 수직으로 돌아가게 둔다 — 곧장 이으면 다이어그램을
-  // 가로지르는 긴 대각선이 되는데, 실제로 써보니 그쪽이 더 어수선해 보였다.
+  // 여러 단을 거슬러 올라가는 긴 재귀 화살표(경유점 2개 이상)는 dagre 경로 그대로 옆으로
+  // 길게 수직으로 돌아가게 둔다 — 곧장 이으면 다이어그램을 가로지르는 긴 대각선이 되는데,
+  // 실제로 써보니 그쪽이 더 어수선해 보였다. 경유점이 하나뿐인 짧은 화살표는
+  // isDetourWaypoint 참고 — "군더더기 꺾임"일 때만 팽팽하게 당긴다.
   const route = Array.isArray(arrow.routePoints) && arrow.routePoints.length > 0 ? arrow.routePoints : null;
   let waypoints = [];
-  if (route && route.length === 1) {
+  if (route && route.length === 1 && (hasReverseTwin(arrow) || isDetourWaypoint(route[0], fromCenter, toCenter))) {
     const excludeIds = new Set([arrow.fromId, arrow.toId]);
     waypoints = pullRouteTaut([fromCenter, ...route, toCenter], excludeIds).slice(1, -1);
   } else if (route) {
@@ -1863,8 +1907,10 @@ function updateArrowGeometry(arrow) {
     }
   }
 
-  let pathPoints;
-  if (waypoints.length > 0) {
+  let pathPoints = route && route.length === 1 && hasReverseTwin(arrow) ? twinBentPath(arrow, from, to, fromCenter, toCenter) : null;
+  if (pathPoints) {
+    // 왕복 쌍을 "비스듬히 내려오다 수직으로 꺾여 들어가는" 두 줄로 그렸다(twinBentPath).
+  } else if (waypoints.length > 0) {
     // 경유점이 남았으면 도형에서 빠져나가는/들어오는 지점도 상대 도형의 중심이 아니라
     // 첫/마지막 경유점을 향하게 한다.
     const p1 = shapeExitPoint(from, waypoints[0].x, waypoints[0].y);
